@@ -9,6 +9,8 @@ struct Vec3f
 {
 	float x, y, z;
 
+	constexpr Vec3f(float x_ = 0.0f, float y_ = 0.0f, float z_ = 0.0f) : x(x_), y(y_), z(z_) {}
+	
 	constexpr 
 	float& operator[] (std::size_t aI) noexcept
 	{
@@ -23,6 +25,15 @@ struct Vec3f
 	}
 };
 
+constexpr
+Vec3f cross(Vec3f const& a, Vec3f const& b) noexcept
+{
+    return Vec3f{
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}
 
 constexpr
 Vec3f operator+( Vec3f aVec ) noexcept
