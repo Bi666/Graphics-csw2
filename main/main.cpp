@@ -38,6 +38,8 @@ namespace
 
     static Camera g_camera;
     static Mouse g_mouse;
+	float lastFrame = 0.0f;
+    float baseSpeed = 2.5f;
 
     GLuint g_vao = 0;
     GLuint g_vbo = 0;
@@ -120,7 +122,10 @@ namespace
 
         if (aAction == GLFW_PRESS || aAction == GLFW_REPEAT)
         {
-            float speed = 0.1f;
+            float currentFrame = glfwGetTime();
+			float deltaTime = currentFrame - lastFrame;
+			lastFrame = currentFrame;
+			float speed = baseSpeed * deltaTime;
             if (glfwGetKey(aWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) 
                 speed *= 2.0f;
             if (glfwGetKey(aWindow, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) 
@@ -191,20 +196,32 @@ namespace
         glBindVertexArray(0);
     }
 
-    void render_scene_()
+    void render_scene_(int iwidth, int iheight)
     {
         glUseProgram(g_shaderProgram);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		float aspect = float(iwidth) / float(iheight);
+		Mat44f projection = make_perspective_projection(
+			45.0f * M_PI / 180.0f,  // FOV
+			aspect,                  // 宽高比
+			0.1f,                   // 近平面
+			100.0f                  // 远平面
+		);
 
         Mat44f view_matrix = make_translation(-g_camera.position);
         Mat44f rotation_x = make_rotation_x(g_camera.pitch * M_PI / 180.0f);
         Mat44f rotation_y = make_rotation_y(g_camera.yaw * M_PI / 180.0f);
         Mat44f view = rotation_x * rotation_y * view_matrix;
 
-        GLint view_loc = glGetUniformLocation(g_shaderProgram, "view");
-        if (view_loc != -1) {
-            glUniformMatrix4fv(view_loc, 1, GL_FALSE, view.v);
-        }
+		// 修改为包含投影矩阵
+		Mat44f pv = projection * view;  // 透视矩阵 * 视图矩阵
+
+		// 更新着色器中的矩阵
+		GLint pv_loc = glGetUniformLocation(g_shaderProgram, "pv");
+		if (pv_loc != -1) {
+			glUniformMatrix4fv(pv_loc, 1, GL_FALSE, pv.v);
+		}
 
         Vec3f lightDir = normalize(Vec3f{0.0f, 1.0f, -1.0f});
         GLint lightDirLoc = glGetUniformLocation(g_shaderProgram, "lightDir");
@@ -286,11 +303,12 @@ const char* kVertexShaderSource = R"(
     out vec3 FragPos;
     out vec3 Normal;
 
-    uniform mat4 view;
+    // 修改为投影视图矩阵
+    uniform mat4 pv;  // 替换原来的 view
 
     void main()
     {
-        gl_Position = view * vec4(aPos, 1.0);
+        gl_Position = pv * vec4(aPos, 1.0);  // 使用新的 pv 矩阵
         FragPos = aPos;
         Normal = aNormal;
     }
@@ -306,10 +324,18 @@ const char* kFragmentShaderSource = R"(
 
     void main()
     {
+        // 添加环境光
+        float ambientStrength = 0.1;
+        vec3 ambient = ambientStrength * lightColor;
+
         vec3 norm = normalize(Normal);
         vec3 lightDirNorm = normalize(lightDir);
         float diff = max(dot(norm, lightDirNorm), 0.0);
-        FragColor = vec4(lightColor * diff, 1.0);
+        vec3 diffuse = lightColor * diff;
+
+        // 合并环境光和漫反射
+        vec3 result = ambient + diffuse;
+        FragColor = vec4(result, 1.0);
     }
 )";
 
@@ -423,7 +449,7 @@ int main() try
 
         // Draw scene
         OGL_CHECKPOINT_DEBUG();
-        render_scene_();
+        render_scene_(iwidth, iheight);
         OGL_CHECKPOINT_DEBUG();
 
         // Display results
