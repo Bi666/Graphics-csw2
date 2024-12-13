@@ -15,6 +15,7 @@
 #include "../vmlib/vec4.hpp"
 #include "../vmlib/mat44.hpp"
 #include "../third_party/rapidobj/include/rapidobj/rapidobj.hpp"
+#include "../third_party/stb/include/stb_image.h"
 
 #include "defaults.hpp"
 #include "iostream"
@@ -24,10 +25,27 @@ namespace
     constexpr char const* kWindowTitle = "COMP3811 - CW2";
 
     struct Camera {
-        Vec3f position{0.0f, 0.0f, 3.0f};
-        float yaw = 0.0f;
-        float pitch = 0.0f;
-    };
+		Vec3f position{0.0f, 0.0f, 3.0f};  // 相机位置
+		Vec3f front{0.0f, 0.0f, -1.0f};    // 前向量（相机朝向）
+		Vec3f up{0.0f, 1.0f, 0.0f};        // 上向量
+		Vec3f right{1.0f, 0.0f, 0.0f};     // 右向量
+		float yaw = 0.0f;                  // 偏航角
+		float pitch = 0.0f;                // 俯仰角
+		
+		// 更新相机向量的方法
+		void updateCameraVectors()
+		{
+			// 计算新的前向量
+			front.x = cos(yaw * M_PI / 180.0f) * cos(pitch * M_PI / 180.0f);
+			front.y = sin(pitch * M_PI / 180.0f);
+			front.z = sin(yaw * M_PI / 180.0f) * cos(pitch * M_PI / 180.0f);
+			front = normalize(front);
+			
+			// 计算右向量和上向量
+			right = normalize(cross(front, Vec3f{0.0f, 1.0f, 0.0f}));
+			up = normalize(cross(right, front));
+		}
+	};
 
     struct Mouse {
         bool rightButtonPressed = false;
@@ -46,6 +64,8 @@ namespace
     GLuint g_shaderProgram = 0;
     std::vector<float> g_vertices;
     std::vector<float> g_normals;
+	std::vector<float> g_texcoords;
+	GLuint g_texture = 0;
 
     struct GLFWCleanupHelper
     {
@@ -59,35 +79,41 @@ namespace
     };
 
     void glfw_callback_mouse_(GLFWwindow* window, double xpos, double ypos)
-    {
-        if (!g_mouse.rightButtonPressed)
-            return;
+	{
+		if (!g_mouse.rightButtonPressed)
+			return;
 
-        if (g_mouse.firstMouse)
-        {
-            g_mouse.lastX = xpos;
-            g_mouse.lastY = ypos;
-            g_mouse.firstMouse = false;
-            return;
-        }
+		if (g_mouse.firstMouse) {
+			g_mouse.lastX = xpos;
+			g_mouse.lastY = ypos;
+			g_mouse.firstMouse = false;
+			return;
+		}
 
-        float xoffset = float(xpos - g_mouse.lastX);
-        float yoffset = float(g_mouse.lastY - ypos);
-        g_mouse.lastX = xpos;
-        g_mouse.lastY = ypos;
+		// 计算鼠标移动的偏移量 
+		float xoffset = float(xpos - g_mouse.lastX);
+		float yoffset = float(g_mouse.lastY - ypos); // 注意y轴是反的
+		g_mouse.lastX = xpos;
+		g_mouse.lastY = ypos;
 
-        float sensitivity = 0.1f;
-        xoffset *= sensitivity;
-        yoffset *= sensitivity;
+		// 设置适当的灵敏度
+		const float sensitivity = 0.1f;
+		xoffset *= sensitivity;
+		yoffset *= sensitivity;
 
-        g_camera.yaw += xoffset;
-        g_camera.pitch += yoffset;
+		// 更新相机欧拉角
+		g_camera.yaw += xoffset;
+		g_camera.pitch += yoffset;
 
-        if(g_camera.pitch > 89.0f)
-            g_camera.pitch = 89.0f;
-        if(g_camera.pitch < -89.0f)
-            g_camera.pitch = -89.0f;
-    }
+		// 限制俯仰角以防止翻转
+		if (g_camera.pitch > 89.0f)
+			g_camera.pitch = 89.0f;
+		if (g_camera.pitch < -89.0f)
+			g_camera.pitch = -89.0f;
+
+		// 更新相机向量
+		g_camera.updateCameraVectors();
+	}
 
     void glfw_callback_mouse_button_(GLFWwindow* window, int button, int action, int)
     {
@@ -113,100 +139,173 @@ namespace
 	}
 
     void glfw_callback_key_(GLFWwindow* aWindow, int aKey, int, int aAction, int)
-    {
-        if (GLFW_KEY_ESCAPE == aKey && GLFW_PRESS == aAction)
-        {
-            glfwSetWindowShouldClose(aWindow, GLFW_TRUE);
-            return;
-        }
+	{
+		if (GLFW_KEY_ESCAPE == aKey && GLFW_PRESS == aAction)
+		{
+			glfwSetWindowShouldClose(aWindow, GLFW_TRUE);
+			return;
+		}
 
-        if (aAction == GLFW_PRESS || aAction == GLFW_REPEAT)
-        {
-            float currentFrame = glfwGetTime();
+		if (aAction == GLFW_PRESS || aAction == GLFW_REPEAT)
+		{
+			float currentFrame = glfwGetTime();
 			float deltaTime = currentFrame - lastFrame;
 			lastFrame = currentFrame;
 			float speed = baseSpeed * deltaTime;
-            if (glfwGetKey(aWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) 
-                speed *= 2.0f;
-            if (glfwGetKey(aWindow, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) 
-                speed *= 0.5f;
+			
+			// Modify speed based on modifier keys
+			if (glfwGetKey(aWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) 
+				speed *= 2.0f;
+			if (glfwGetKey(aWindow, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) 
+				speed *= 0.5f;
 
-            if (aKey == GLFW_KEY_W) g_camera.position.z -= speed;
-            if (aKey == GLFW_KEY_S) g_camera.position.z += speed;
-            if (aKey == GLFW_KEY_A) g_camera.position.x -= speed;
-            if (aKey == GLFW_KEY_D) g_camera.position.x += speed;
-            if (aKey == GLFW_KEY_E) g_camera.position.y += speed;
-            if (aKey == GLFW_KEY_Q) g_camera.position.y -= speed;
-        }
-    }
+			// Get the horizontal components of front vector (ignoring y for WASD movement)
+			Vec3f horizontalFront = g_camera.front;
+			horizontalFront.y = 0.0f;
+			horizontalFront = normalize(horizontalFront);
+
+			// Forward/Backward movement
+			if (aKey == GLFW_KEY_W)
+				g_camera.position = g_camera.position + horizontalFront * speed;
+			if (aKey == GLFW_KEY_S)
+				g_camera.position = g_camera.position - horizontalFront * speed;
+
+			// Left/Right movement
+			if (aKey == GLFW_KEY_A)
+				g_camera.position = g_camera.position - g_camera.right * speed;
+			if (aKey == GLFW_KEY_D)
+				g_camera.position = g_camera.position + g_camera.right * speed;
+
+			// Up/Down movement
+			if (aKey == GLFW_KEY_E)
+				g_camera.position.y += speed;
+			if (aKey == GLFW_KEY_Q)
+				g_camera.position.y -= speed;
+		}
+	}
 
     void load_mesh_(const std::string& path)
-    {
-        auto result = rapidobj::ParseFile(path);
-        if (result.error) {
-            throw Error("Failed to load OBJ file");
-        }
+	{
+		auto result = rapidobj::ParseFile(path);
+		if (result.error) {
+			throw Error("Failed to load OBJ file");
+		}
 
-        g_vertices.clear();
-        g_normals.clear();
+		auto& attrib = result.attributes;
+		g_vertices.clear();
+		g_normals.clear();
+		g_texcoords.clear(); // Clear texture coordinates
 
-        for (const auto& shape : result.shapes) {
-            for (const auto& index : shape.mesh.indices) {
-                // Vertices
-                g_vertices.push_back(result.attributes.positions[3 * index.position_index + 0]);
-                g_vertices.push_back(result.attributes.positions[3 * index.position_index + 1]);
-                g_vertices.push_back(result.attributes.positions[3 * index.position_index + 2]);
+		for (const auto& shape : result.shapes) {
+			for (const auto& index : shape.mesh.indices) {
+				// Vertex position
+				g_vertices.push_back(attrib.positions[3 * index.position_index + 0]);
+				g_vertices.push_back(attrib.positions[3 * index.position_index + 1]);
+				g_vertices.push_back(attrib.positions[3 * index.position_index + 2]);
 
-                // Normals
-                if (index.normal_index >= 0) {
-                    g_normals.push_back(result.attributes.normals[3 * index.normal_index + 0]);
-                    g_normals.push_back(result.attributes.normals[3 * index.normal_index + 1]);
-                    g_normals.push_back(result.attributes.normals[3 * index.normal_index + 2]);
-                }
-            }
-        }
+				// normal
+				if (index.normal_index >= 0) {
+					g_normals.push_back(attrib.normals[3 * index.normal_index + 0]);
+					g_normals.push_back(attrib.normals[3 * index.normal_index + 1]);
+					g_normals.push_back(attrib.normals[3 * index.normal_index + 2]);
+				}
 
-        glGenVertexArrays(1, &g_vao);
-        glBindVertexArray(g_vao);
+				// texture coordinate
+				if (index.texcoord_index >= 0) {
+					g_texcoords.push_back(attrib.texcoords[2 * index.texcoord_index + 0]);
+					g_texcoords.push_back(attrib.texcoords[2 * index.texcoord_index + 1]);
+				}
+			}
+		}
 
-        glGenBuffers(1, &g_vbo);
-        glBindBuffer(GL_ARRAY_BUFFER, g_vbo);
+		// Create and bind VAO
+		glGenVertexArrays(1, &g_vao);
+		glBindVertexArray(g_vao);
 
-        std::vector<float> vertex_data;
-        for (size_t i = 0; i < g_vertices.size() / 3; ++i) {
-            vertex_data.push_back(g_vertices[i * 3 + 0]);
-            vertex_data.push_back(g_vertices[i * 3 + 1]);
-            vertex_data.push_back(g_vertices[i * 3 + 2]);
-            vertex_data.push_back(g_normals[i * 3 + 0]);
-            vertex_data.push_back(g_normals[i * 3 + 1]);
-            vertex_data.push_back(g_normals[i * 3 + 2]);
-        }
+		// Create and bind VBO
+		glGenBuffers(1, &g_vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, g_vbo);
 
-        glBufferData(GL_ARRAY_BUFFER, vertex_data.size() * sizeof(float), 
-                    vertex_data.data(), GL_STATIC_DRAW);
+		// Combined vertex data
+		std::vector<float> vertex_data;
+		for (size_t i = 0; i < g_vertices.size() / 3; ++i) {
+			// location
+			vertex_data.push_back(g_vertices[i * 3 + 0]);
+			vertex_data.push_back(g_vertices[i * 3 + 1]);
+			vertex_data.push_back(g_vertices[i * 3 + 2]);
+			
+			// normal
+			vertex_data.push_back(g_normals[i * 3 + 0]);
+			vertex_data.push_back(g_normals[i * 3 + 1]);
+			vertex_data.push_back(g_normals[i * 3 + 2]);
+			
+			if (!g_texcoords.empty()) {
+				vertex_data.push_back(g_texcoords[i * 2 + 0]);
+				vertex_data.push_back(g_texcoords[i * 2 + 1]);
+			} else {
+				// default values
+				vertex_data.push_back(0.0f);
+				vertex_data.push_back(0.0f);
+			}
+		}
 
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
+		// Transfer the data to the GPU
+		glBufferData(GL_ARRAY_BUFFER, vertex_data.size() * sizeof(float), 
+					vertex_data.data(), GL_STATIC_DRAW);
 
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), 
-                           (void*)(3 * sizeof(float)));
-        glEnableVertexAttribArray(1);
+		// Configuring vertex properties
+		// Location attribute
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(0);
 
-        glBindBuffer(GL_ARRAY_BUFFER, 0);
-        glBindVertexArray(0);
-    }
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), 
+							(void*)(3 * sizeof(float)));
+		glEnableVertexAttribArray(1);
+
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), 
+							(void*)(6 * sizeof(float)));
+		glEnableVertexAttribArray(2);
+
+		glBindBuffer(GL_ARRAY_BUFFER, 0);
+		glBindVertexArray(0);
+	}
+
+	void load_texture_(const std::string& path) {
+		glGenTextures(1, &g_texture);
+		glBindTexture(GL_TEXTURE_2D, g_texture);
+		
+		// Set texture wrapping/filtering options
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		
+		// Load image data
+		int width, height, channels;
+		unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
+		if (data) {
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+			glGenerateMipmap(GL_TEXTURE_2D);
+		} else {
+			throw Error("Failed to load texture");
+		}
+		stbi_image_free(data);
+	}
 
     void render_scene_(int iwidth, int iheight)
     {
         glUseProgram(g_shaderProgram);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+		glActiveTexture(GL_TEXTURE0);
+    	glBindTexture(GL_TEXTURE_2D, g_texture);
+
 		float aspect = float(iwidth) / float(iheight);
 		Mat44f projection = make_perspective_projection(
 			45.0f * M_PI / 180.0f,  // FOV
-			aspect,                  // 宽高比
-			0.1f,                   // 近平面
-			100.0f                  // 远平面
+			aspect,                  // aspect ratio
+			0.1f,                   // Near plane
+			100.0f                  // Far plane
 		);
 
         Mat44f view_matrix = make_translation(-g_camera.position);
@@ -214,10 +313,10 @@ namespace
         Mat44f rotation_y = make_rotation_y(g_camera.yaw * M_PI / 180.0f);
         Mat44f view = rotation_x * rotation_y * view_matrix;
 
-		// 修改为包含投影矩阵
-		Mat44f pv = projection * view;  // 透视矩阵 * 视图矩阵
+		// Modified to include a projection matrix
+		Mat44f pv = projection * view;  // Perspective matrix * View matrix
 
-		// 更新着色器中的矩阵
+		// Update the matrix in the shader
 		GLint pv_loc = glGetUniformLocation(g_shaderProgram, "pv");
 		if (pv_loc != -1) {
 			glUniformMatrix4fv(pv_loc, 1, GL_FALSE, pv.v);
@@ -228,6 +327,11 @@ namespace
         if (lightDirLoc != -1) {
             glUniform3fv(lightDirLoc, 1, &lightDir.x);
         }
+
+		GLint texLoc = glGetUniformLocation(g_shaderProgram, "texture1");
+		if (texLoc != -1) {
+			glUniform1i(texLoc, 0);
+		}
 
         Vec3f lightColor{1.0f, 1.0f, 1.0f};
         GLint lightColorLoc = glGetUniformLocation(g_shaderProgram, "lightColor");
@@ -299,42 +403,48 @@ const char* kVertexShaderSource = R"(
     #version 330 core
     layout(location = 0) in vec3 aPos;
     layout(location = 1) in vec3 aNormal;
+    layout(location = 2) in vec2 aTexCoord;
 
     out vec3 FragPos;
     out vec3 Normal;
+    out vec2 TexCoord;
 
-    // 修改为投影视图矩阵
-    uniform mat4 pv;  // 替换原来的 view
+    uniform mat4 pv;
 
     void main()
     {
-        gl_Position = pv * vec4(aPos, 1.0);  // 使用新的 pv 矩阵
+        gl_Position = pv * vec4(aPos, 1.0);
         FragPos = aPos;
         Normal = aNormal;
+        TexCoord = aTexCoord;
     }
 )";
 
 const char* kFragmentShaderSource = R"(
     #version 330 core
     in vec3 Normal;
+    in vec2 TexCoord;
     out vec4 FragColor;
 
     uniform vec3 lightDir;
     uniform vec3 lightColor;
+    uniform sampler2D texture1;
 
     void main()
     {
-        // 添加环境光
+        // Ambient
         float ambientStrength = 0.1;
         vec3 ambient = ambientStrength * lightColor;
 
+        // Diffuse
         vec3 norm = normalize(Normal);
         vec3 lightDirNorm = normalize(lightDir);
         float diff = max(dot(norm, lightDirNorm), 0.0);
         vec3 diffuse = lightColor * diff;
 
-        // 合并环境光和漫反射
-        vec3 result = ambient + diffuse;
+        // Combine lighting with texture
+        vec3 texColor = texture(texture1, TexCoord).rgb;
+        vec3 result = (ambient + diffuse) * texColor;
         FragColor = vec4(result, 1.0);
     }
 )";
@@ -409,6 +519,7 @@ int main() try
     // Load mesh and create shaders
     load_mesh_("assets/parlahti.obj");
     g_shaderProgram = create_shader_program_(kVertexShaderSource, kFragmentShaderSource);
+	load_texture_("assets/L4343A-4k.jpeg");
 
     // Get actual framebuffer size
     int iwidth, iheight;
@@ -460,6 +571,7 @@ int main() try
     glDeleteVertexArrays(1, &g_vao);
     glDeleteBuffers(1, &g_vbo);
     glDeleteProgram(g_shaderProgram);
+	glDeleteTextures(1, &g_texture);
 
     return 0;
 }
