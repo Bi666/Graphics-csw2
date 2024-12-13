@@ -115,6 +115,7 @@ namespace
 		g_camera.updateCameraVectors();
 	}
 
+
     void glfw_callback_mouse_button_(GLFWwindow* window, int button, int action, int)
     {
         if (button == GLFW_MOUSE_BUTTON_RIGHT)
@@ -138,7 +139,7 @@ namespace
 		std::fprintf( stderr, "GLFW error: %s (%d)\n", aErrDesc, aErrNum );
 	}
 
-    void glfw_callback_key_(GLFWwindow* aWindow, int aKey, int, int aAction, int)
+	void glfw_callback_key_(GLFWwindow* aWindow, int aKey, int, int aAction, int)
 	{
 		if (GLFW_KEY_ESCAPE == aKey && GLFW_PRESS == aAction)
 		{
@@ -153,34 +154,31 @@ namespace
 			lastFrame = currentFrame;
 			float speed = baseSpeed * deltaTime;
 			
-			// Modify speed based on modifier keys
 			if (glfwGetKey(aWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) 
 				speed *= 2.0f;
 			if (glfwGetKey(aWindow, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) 
 				speed *= 0.5f;
 
-			// Get the horizontal components of front vector (ignoring y for WASD movement)
-			Vec3f horizontalFront = g_camera.front;
-			horizontalFront.y = 0.0f;
-			horizontalFront = normalize(horizontalFront);
-
-			// Forward/Backward movement
-			if (aKey == GLFW_KEY_W)
-				g_camera.position = g_camera.position + horizontalFront * speed;
-			if (aKey == GLFW_KEY_S)
-				g_camera.position = g_camera.position - horizontalFront * speed;
-
-			// Left/Right movement
-			if (aKey == GLFW_KEY_A)
-				g_camera.position = g_camera.position - g_camera.right * speed;
-			if (aKey == GLFW_KEY_D)
-				g_camera.position = g_camera.position + g_camera.right * speed;
-
-			// Up/Down movement
-			if (aKey == GLFW_KEY_E)
-				g_camera.position.y += speed;
-			if (aKey == GLFW_KEY_Q)
-				g_camera.position.y -= speed;
+			switch(aKey) {
+				case GLFW_KEY_W: // 前进
+					g_camera.position = g_camera.position + g_camera.front * speed;
+					break;
+				case GLFW_KEY_S: // 后退
+					g_camera.position = g_camera.position - g_camera.front * speed;
+					break;
+				case GLFW_KEY_A: // 左移
+					g_camera.position = g_camera.position - g_camera.right * speed;
+					break;
+				case GLFW_KEY_D: // 右移
+					g_camera.position = g_camera.position + g_camera.right * speed;
+					break;
+				case GLFW_KEY_E: // 上移
+					g_camera.position = g_camera.position + Vec3f{0.0f, 1.0f, 0.0f} * speed;
+					break;
+				case GLFW_KEY_Q: // 下移
+					g_camera.position = g_camera.position - Vec3f{0.0f, 1.0f, 0.0f} * speed;
+					break;
+			}
 		}
 	}
 
