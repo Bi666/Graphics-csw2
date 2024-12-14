@@ -18,20 +18,11 @@ endif
 # Configurations
 # #############################################
 
-ifeq ($(origin CC), default)
-  CC = clang
-endif
-ifeq ($(origin CXX), default)
-  CXX = clang++
-endif
-ifeq ($(origin AR), default)
-  AR = ar
-endif
+RESCOMP = windres
 INCLUDES += -I../third_party/stb/include -I../third_party/glad/include -I../third_party/glfw/include -I../third_party/rapidobj/include -I../third_party/catch2/include -I../third_party/fontstash/include
 FORCE_INCLUDE +=
-ALL_CPPFLAGS += $(CPPFLAGS) -MD -MP $(DEFINES) $(INCLUDES)
+ALL_CPPFLAGS += $(CPPFLAGS) -MMD -MP $(DEFINES) $(INCLUDES)
 ALL_RESFLAGS += $(RESFLAGS) $(DEFINES) $(INCLUDES)
-ALL_LDFLAGS += $(LDFLAGS) -m64 -pthread
 LINKCMD = $(CXX) -o "$@" $(OBJECTS) $(RESOURCES) $(ALL_LDFLAGS) $(LIBS)
 define PREBUILDCMDS
 endef
@@ -42,23 +33,25 @@ endef
 
 ifeq ($(config),debug_x64)
 TARGETDIR = ../bin
-TARGET = $(TARGETDIR)/vmlib-test-debug-x64-clang.exe
-OBJDIR = ../_build_/debug-x64-clang/x64/debug/vmlib-test
+TARGET = $(TARGETDIR)/vmlib-test-debug-x64-gcc.exe
+OBJDIR = ../_build_/debug-x64-gcc/x64/debug/vmlib-test
 DEFINES += -D_DEBUG=1
 ALL_CFLAGS += $(CFLAGS) $(ALL_CPPFLAGS) -m64 -g -march=native -Wall -pthread -Werror=vla
 ALL_CXXFLAGS += $(CXXFLAGS) $(ALL_CPPFLAGS) -m64 -g -std=c++17 -march=native -Wall -pthread -Werror=vla
-LIBS += ../lib/libvmlib-debug-x64-clang.a ../lib/libx-catch2-debug-x64-clang.a -framework Cocoa -framework OpenGL -framework IOKit -framework CoreVideo
-LDDEPS += ../lib/libvmlib-debug-x64-clang.a ../lib/libx-catch2-debug-x64-clang.a
+LIBS += ../lib/libvmlib-debug-x64-gcc.a ../lib/libx-catch2-debug-x64-gcc.a -ldl
+LDDEPS += ../lib/libvmlib-debug-x64-gcc.a ../lib/libx-catch2-debug-x64-gcc.a
+ALL_LDFLAGS += $(LDFLAGS) -L/usr/lib64 -m64 -pthread
 
 else ifeq ($(config),release_x64)
 TARGETDIR = ../bin
-TARGET = $(TARGETDIR)/vmlib-test-release-x64-clang.exe
-OBJDIR = ../_build_/release-x64-clang/x64/release/vmlib-test
+TARGET = $(TARGETDIR)/vmlib-test-release-x64-gcc.exe
+OBJDIR = ../_build_/release-x64-gcc/x64/release/vmlib-test
 DEFINES += -DNDEBUG=1
 ALL_CFLAGS += $(CFLAGS) $(ALL_CPPFLAGS) -m64 -O2 -march=native -Wall -pthread -Werror=vla
 ALL_CXXFLAGS += $(CXXFLAGS) $(ALL_CPPFLAGS) -m64 -O2 -std=c++17 -march=native -Wall -pthread -Werror=vla
-LIBS += ../lib/libvmlib-release-x64-clang.a ../lib/libx-catch2-release-x64-clang.a -framework Cocoa -framework OpenGL -framework IOKit -framework CoreVideo
-LDDEPS += ../lib/libvmlib-release-x64-clang.a ../lib/libx-catch2-release-x64-clang.a
+LIBS += ../lib/libvmlib-release-x64-gcc.a ../lib/libx-catch2-release-x64-gcc.a -ldl
+LDDEPS += ../lib/libvmlib-release-x64-gcc.a ../lib/libx-catch2-release-x64-gcc.a
+ALL_LDFLAGS += $(LDFLAGS) -L/usr/lib64 -m64 -s -pthread
 
 endif
 
@@ -69,8 +62,13 @@ endif
 # File sets
 # #############################################
 
-GENERATED += $(OBJDIR)/test_mat44.o
-OBJECTS += $(OBJDIR)/test_mat44.o
+GENERATED :=
+OBJECTS :=
+
+GENERATED += $(OBJDIR)/custom_tests.o
+GENERATED += $(OBJDIR)/empty.o
+OBJECTS += $(OBJDIR)/custom_tests.o
+OBJECTS += $(OBJDIR)/empty.o
 
 # Rules
 # #############################################
@@ -108,7 +106,7 @@ ifeq (posix,$(SHELLTYPE))
 	$(SILENT) rm -rf $(OBJDIR)
 else
 	$(SILENT) if exist $(subst /,\\,$(TARGET)) del $(subst /,\\,$(TARGET))
-	$(SILENT) if exist $(subst /,\\,$(GENERATED)) del /s /q $(subst /,\\,$(GENERATED))
+	$(SILENT) if exist $(subst /,\\,$(GENERATED)) rmdir /s /q $(subst /,\\,$(GENERATED))
 	$(SILENT) if exist $(subst /,\\,$(OBJDIR)) rmdir /s /q $(subst /,\\,$(OBJDIR))
 endif
 
@@ -134,15 +132,14 @@ endif
 # File Rules
 # #############################################
 
-$(OBJDIR)/test_mat44.o: ./test_mat44.cpp
-	@echo "Compiling $(notdir $<)"
+$(OBJDIR)/custom_tests.o: custom_tests.cpp
+	@echo $(notdir $<)
+	$(SILENT) $(CXX) $(ALL_CXXFLAGS) $(FORCE_INCLUDE) -o "$@" -MF "$(@:%.o=%.d)" -c "$<"
+$(OBJDIR)/empty.o: empty.cpp
+	@echo $(notdir $<)
 	$(SILENT) $(CXX) $(ALL_CXXFLAGS) $(FORCE_INCLUDE) -o "$@" -MF "$(@:%.o=%.d)" -c "$<"
 
 -include $(OBJECTS:%.o=%.d)
 ifneq (,$(PCH))
   -include $(PCH_PLACEHOLDER).d
 endif
-
-test: $(TARGET)
-	@echo Running tests
-	$(SILENT) ./$(TARGET)

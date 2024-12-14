@@ -31,16 +31,16 @@ struct Mat33f
 	float v[9];
 
 	constexpr
-	float& operator() (std::size_t aI, std::size_t aJ) noexcept
+		float& operator() (std::size_t aI, std::size_t aJ) noexcept
 	{
-		assert( aI < 3 && aJ < 3 );
-		return v[aI*3 + aJ];
+		assert(aI < 3 && aJ < 3);
+		return v[aI * 3 + aJ];
 	}
 	constexpr
-	float const& operator() (std::size_t aI, std::size_t aJ) const noexcept
+		float const& operator() (std::size_t aI, std::size_t aJ) const noexcept
 	{
-		assert( aI < 3 && aJ < 3 );
-		return v[aI*3 + aJ];
+		assert(aI < 3 && aJ < 3);
+		return v[aI * 3 + aJ];
 	}
 };
 
@@ -54,24 +54,29 @@ constexpr Mat33f kIdentity33f = { {
 // Common operators for Mat33f.
 
 constexpr
-Vec3f operator*( Mat33f const& aLeft, Vec3f const& aRight ) noexcept
+Vec3f operator*(Mat33f const& aLeft, Vec3f const& aRight) noexcept
 {
-	//TODO: your implementation goes here
-	//TODO: remove the following when you start your implementation
-	(void)aLeft;   // Avoid warnings about unused arguments until the function
-	(void)aRight;  // is properly implemented.
-	return { 0.f, 0.f, 0.f };
+	Vec3f ret{};
+	for (std::size_t j = 0; j < 3; ++j)
+	{
+		for (std::size_t i = 0; i < 3; ++i)
+		{
+			ret[j] += aLeft(j, i) * aRight[i];
+		}
+	}
+	return ret;
 }
 
 // Functions:
+
 inline
-Mat33f mat44_to_mat33( Mat44f const& aM )
+Mat33f mat44_to_mat33(Mat44f const& aM)
 {
 	Mat33f ret;
-	for( std::size_t i = 0; i < 3; ++i )
+	for (std::size_t i = 0; i < 3; ++i)
 	{
-		for( std::size_t j = 0; j < 3; ++j )
-			ret(i,j) = aM(i,j);
+		for (std::size_t j = 0; j < 3; ++j)
+			ret(i, j) = aM(i, j);
 	}
 	return ret;
 }

@@ -126,13 +126,6 @@ project( "x-catch2" )
 
 	location "."
 
-	filter "system:windows"
-		-- Catch2 defaults to the non-standard wmain() entry function
-		-- on Windows. Don't do that.
-		defines { "DO_NOT_USE_WMAIN=1" }
-	filter "*"
-
-	files( "catch2/include/**.hpp" )
 	files( "catch2/src/*.cpp" )
 
 project( "x-fontstash" )

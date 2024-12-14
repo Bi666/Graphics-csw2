@@ -14,126 +14,419 @@
 
 #include "../vmlib/vec4.hpp"
 #include "../vmlib/mat44.hpp"
-#include "../third_party/rapidobj/include/rapidobj/rapidobj.hpp"
-#include "../third_party/stb/include/stb_image.h"
+#include "../vmlib/mat33.hpp"
 
 #include "defaults.hpp"
-#include "iostream"
+
+#include "cylinder.hpp"
+#include "cone.hpp"
+#include "loadobj.hpp"
+#include "simple_mesh.hpp"
+#include "loadcustom.hpp"
+
+#include "cube.hpp"
+#include "texture.hpp"
+
+#include "fontstash.h"
 
 namespace
 {
-    constexpr char const* kWindowTitle = "COMP3811 - CW2";
+	constexpr char const* kWindowTitle = "COMP3811 - CW2";
 
-    struct Camera {
-		Vec3f position{0.0f, 0.0f, 3.0f};  // 相机位置
-		Vec3f front{0.0f, 0.0f, -1.0f};    // 前向量（相机朝向）
-		Vec3f up{0.0f, 1.0f, 0.0f};        // 上向量
-		Vec3f right{1.0f, 0.0f, 0.0f};     // 右向量
-		float yaw = 0.0f;                  // 偏航角
-		float pitch = 0.0f;                // 俯仰角
-		
-		// 更新相机向量的方法
-		void updateCameraVectors()
+	constexpr float kPi_ = 3.1415926f;
+
+	float kMovementPerSecond_ = 5.f; // units per second
+	float kMouseSensitivity_ = 0.01f; // radians per pixel
+	struct State_ //struct for camera control
+	{
+		ShaderProgram* prog;
+
+		struct CamCtrl_
 		{
-			// 计算新的前向量
-			front.x = cos(yaw * M_PI / 180.0f) * cos(pitch * M_PI / 180.0f);
-			front.y = sin(pitch * M_PI / 180.0f);
-			front.z = sin(yaw * M_PI / 180.0f) * cos(pitch * M_PI / 180.0f);
-			front = normalize(front);
-			
-			// 计算右向量和上向量
-			right = normalize(cross(front, Vec3f{0.0f, 1.0f, 0.0f}));
-			up = normalize(cross(right, front));
-		}
+			bool cameraActive;
+			bool actionZoomIn, actionZoomOut;
+			bool actionZoomleft, actionZoomRight;
+			bool actionMoveForward, actionMoveBackward;
+			bool actionMoveLeft, actionMoveRight;
+			bool actionMoveUp, actionMoveDown;
+
+			float phi, theta;
+			float radius;
+			Vec3f movementVec;
+
+			float lastX, lastY;
+		} camControl;
 	};
 
-    struct Mouse {
-        bool rightButtonPressed = false;
-        double lastX = 400.0;
-        double lastY = 300.0;
-        bool firstMouse = true;
-    };
+	void glfw_callback_error_( int, char const* );
+	void glfw_callback_key_( GLFWwindow*, int, int, int, int );
 
-    static Camera g_camera;
-    static Mouse g_mouse;
-	float lastFrame = 0.0f;
-    float baseSpeed = 2.5f;
+	void glfw_callback_motion_(GLFWwindow*, double, double); //function for mouse motion
 
-    GLuint g_vao = 0;
-    GLuint g_vbo = 0;
-    GLuint g_shaderProgram = 0;
-    std::vector<float> g_vertices;
-    std::vector<float> g_normals;
-	std::vector<float> g_texcoords;
-	GLuint g_texture = 0;
-
-    struct GLFWCleanupHelper
-    {
-        ~GLFWCleanupHelper();
-    };
-    
-    struct GLFWWindowDeleter
-    {
-        ~GLFWWindowDeleter();
-        GLFWwindow* window;
-    };
-
-    void glfw_callback_mouse_(GLFWwindow* window, double xpos, double ypos)
+	struct GLFWCleanupHelper
 	{
-		if (!g_mouse.rightButtonPressed)
-			return;
+		~GLFWCleanupHelper();
+	};
+	struct GLFWWindowDeleter
+	{
+		~GLFWWindowDeleter();
+		GLFWwindow* window;
+	};
+}
 
-		if (g_mouse.firstMouse) {
-			g_mouse.lastX = xpos;
-			g_mouse.lastY = ypos;
-			g_mouse.firstMouse = false;
-			return;
+namespace
+{
+	// Mesh rendering
+	void mesh_renderer(
+		GLuint vao,
+		size_t vertexCount,
+		State_ const& state,
+		GLuint textureObjectId,
+		GLuint programID,
+		Mat44f projCameraWorld,
+		Mat33f normalMatrix
+		//Mat44f localTransform
+	)
+	{
+		glUseProgram(programID);
+
+		// for camera
+		glUniformMatrix4fv(
+			0,
+			1, GL_TRUE,
+			projCameraWorld.v);
+
+		//for normals
+		glUniformMatrix3fv(
+			1,
+			1, GL_TRUE,
+			normalMatrix.v);
+
+		Vec3f lightDir = normalize(Vec3f{ 0.f, 1.f, -1.f });
+
+		glUniform3fv(2, 1, &lightDir.x);      // Ambient 
+		glUniform3f(3, 0.9f, 0.9f, 0.9f);	  // Diffusion
+		glUniform3f(4, 0.05f, 0.05f, 0.05f);  // Spectral
+
+		glBindVertexArray(vao);
+		if (textureObjectId != 0)
+		{	glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, textureObjectId);
+		}
+		else
+		{
+			glBindTexture(GL_TEXTURE_2D, 0);
 		}
 
-		// 计算鼠标移动的偏移量 
-		float xoffset = float(xpos - g_mouse.lastX);
-		float yoffset = float(g_mouse.lastY - ypos); // 注意y轴是反的
-		g_mouse.lastX = xpos;
-		g_mouse.lastY = ypos;
-
-		// 设置适当的灵敏度
-		const float sensitivity = 0.1f;
-		xoffset *= sensitivity;
-		yoffset *= sensitivity;
-
-		// 更新相机欧拉角
-		g_camera.yaw += xoffset;
-		g_camera.pitch += yoffset;
-
-		// 限制俯仰角以防止翻转
-		if (g_camera.pitch > 89.0f)
-			g_camera.pitch = 89.0f;
-		if (g_camera.pitch < -89.0f)
-			g_camera.pitch = -89.0f;
-
-		// 更新相机向量
-		g_camera.updateCameraVectors();
+		glDrawArrays(GL_TRIANGLES, 0, vertexCount);
 	}
 
+}
 
-    void glfw_callback_mouse_button_(GLFWwindow* window, int button, int action, int)
-    {
-        if (button == GLFW_MOUSE_BUTTON_RIGHT)
-        {
-            if (action == GLFW_PRESS)
-            {
-                g_mouse.rightButtonPressed = true;
-                g_mouse.firstMouse = true;
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            }
-            else if (action == GLFW_RELEASE)
-            {
-                g_mouse.rightButtonPressed = false;
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-            }
-        }
-    }
 
+int main() try
+{
+	// Initialize GLFW
+	if( GLFW_TRUE != glfwInit() )
+	{
+		char const* msg = nullptr;
+		int ecode = glfwGetError( &msg );
+		throw Error( "glfwInit() failed with '%s' (%d)", msg, ecode );
+	}
+
+	// Ensure that we call glfwTerminate() at the end of the program.
+	GLFWCleanupHelper cleanupHelper;
+
+	// Configure GLFW and create window
+	glfwSetErrorCallback( &glfw_callback_error_ );
+
+	glfwWindowHint( GLFW_SRGB_CAPABLE, GLFW_TRUE );
+	glfwWindowHint( GLFW_DOUBLEBUFFER, GLFW_TRUE );
+
+	//glfwWindowHint( GLFW_RESIZABLE, GLFW_FALSE );
+
+	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 4 );
+	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );
+	glfwWindowHint( GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE );
+	glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE );
+
+	glfwWindowHint(GLFW_DEPTH_BITS, 24);
+
+#	if !defined(NDEBUG)
+	// When building in debug mode, request an OpenGL debug context. This
+	// enables additional debugging features. However, this can carry extra
+	// overheads. We therefore do not do this for release builds.
+	glfwWindowHint( GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE );
+#	endif // ~ !NDEBUG
+
+	GLFWwindow* window = glfwCreateWindow(
+		1280,
+		720,
+		kWindowTitle,
+		nullptr, nullptr
+	);
+
+	if( !window )
+	{
+		char const* msg = nullptr;
+		int ecode = glfwGetError( &msg );
+		throw Error( "glfwCreateWindow() failed with '%s' (%d)", msg, ecode );
+	}
+
+	GLFWWindowDeleter windowDeleter{ window };
+
+	// Set up event handling
+	State_ state{};
+
+	//TODO: Additional event handling setup
+	//setting up keyboard event handling
+	glfwSetWindowUserPointer(window, &state);
+	glfwSetKeyCallback(window, &glfw_callback_key_);
+	glfwSetCursorPosCallback(window, &glfw_callback_motion_); //!!need to make this frame-rate independent
+	//endofTODO
+
+	glfwSetKeyCallback( window, &glfw_callback_key_ );
+
+	// Set up drawing stuff
+	glfwMakeContextCurrent( window );
+	glfwSwapInterval( 1 ); // V-Sync is on.
+
+	// Initialize GLAD
+	// This will load the OpenGL API. We mustn't make any OpenGL calls before this!
+	if( !gladLoadGLLoader( (GLADloadproc)&glfwGetProcAddress ) )
+		throw Error( "gladLoaDGLLoader() failed - cannot load GL API!" );
+
+	std::printf( "RENDERER %s\n", glGetString( GL_RENDERER ) );
+	std::printf( "VENDOR %s\n", glGetString( GL_VENDOR ) );
+	std::printf( "VERSION %s\n", glGetString( GL_VERSION ) );
+	std::printf( "SHADING_LANGUAGE_VERSION %s\n", glGetString( GL_SHADING_LANGUAGE_VERSION ) );
+
+	// Ddebug output
+#	if !defined(NDEBUG)
+	setup_gl_debug_output();
+#	endif // ~ !NDEBUG
+
+	// Global GL state
+	OGL_CHECKPOINT_ALWAYS();
+
+	// TODO: global GL setup goes here
+	glEnable(GL_FRAMEBUFFER_SRGB);
+	glEnable(GL_CULL_FACE);
+	glEnable(GL_DEPTH_TEST);
+	glClearColor(0.2f, 0.2f, 0.2f, 0.2f);
+	//endofTODO
+
+	OGL_CHECKPOINT_ALWAYS();
+
+	// Get actual framebuffer size.
+	// This can be different from the window size, as standard window
+	// decorations (title bar, borders, ...) may be included in the window size
+	// but not be part of the drawable surface area.
+	int iwidth, iheight;
+	glfwGetFramebufferSize( window, &iwidth, &iheight );
+
+	glViewport( 0, 0, iwidth, iheight );
+
+	// Load shader program
+	ShaderProgram prog({
+		{ GL_VERTEX_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\default.vert" },
+		{ GL_FRAGMENT_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\default.frag" }
+		});
+
+	state.prog = &prog; //set shader program to state
+	state.camControl.radius = 10.f; //set initial radius
+
+	auto last = Clock::now();
+	float angle = 0.f;
+
+	auto parlahti = load_wavefront_obj("C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\parlahti.obj");
+	GLuint vao = create_vao(parlahti);
+	std::size_t vertexCount = parlahti.positions.size();
+
+	GLuint textures = load_texture_2d("C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\L4343A-4k.jpeg");
+
+	//----------------------------------------------------------------
+	//load shader program for launchpad
+	 ShaderProgram prog2({
+	 	{ GL_VERTEX_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\launch.vert" }, 
+	 	{ GL_FRAGMENT_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\launch.frag" } 
+	 	}); 
+
+	//state.prog = &prog2;  //set shader program to state
+
+	 // Load the launchpad
+	 auto launch = load_wavefront_obj("C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\landingpad.obj");
+	 std::size_t launchVertexCount = launch.positions.size();
+	 std::vector<Vec3f> positions = launch.positions;
+
+	 // Move the 1st launch object
+	 for (size_t i = 0; i < launchVertexCount; i++)
+	 {
+		 launch.positions[i] = launch.positions[i] + Vec3f{ 0.f, -0.975f, -50.f };
+	 }
+
+	 // Create a VAO for the first launchpad
+	 GLuint launch_vao_1 = create_vao(launch);
+
+	 // Return positions back to normal
+	 launch.positions = positions;
+
+	 // Move the 1st launch object
+	 for (size_t i = 0; i < launchVertexCount; i++)
+	 {
+		 launch.positions[i] = launch.positions[i] + Vec3f{ -20.f, -0.975f, -15.f };
+	 }
+	 // Create a VAO for the first launchpad
+	 GLuint launch_vao_2 = create_vao(launch);
+
+	//-------------------------------------------------------------------
+
+	 // Draw all arrays
+
+
+	// Other initialization & loading
+	OGL_CHECKPOINT_ALWAYS();
+
+	// Main loop
+	while( !glfwWindowShouldClose( window ) )
+	{
+		// Let GLFW process events
+		glfwPollEvents();
+		
+		// Check if window was resized.
+		float fbwidth, fbheight;
+		{
+			int nwidth, nheight;
+			glfwGetFramebufferSize( window, &nwidth, &nheight );
+
+			fbwidth = float(nwidth);
+			fbheight = float(nheight);
+
+			if( 0 == nwidth || 0 == nheight )
+			{
+				// Window minimized? Pause until it is unminimized.
+				// This is a bit of a hack.
+				do
+				{
+					glfwWaitEvents();
+					glfwGetFramebufferSize( window, &nwidth, &nheight );
+				} while( 0 == nwidth || 0 == nheight );
+			}
+
+			glViewport( 0, 0, nwidth, nheight );
+		}
+
+		//TODO: update state
+		auto const now = Clock::now();
+		float dt = std::chrono::duration_cast<Secondsf>(now - last).count(); //difference in time since last frame
+		last = now;
+
+		angle += dt * kPi_ * 0.3f;
+		if (angle >= 2.f * kPi_)
+			angle -= 2.f * kPi_;
+
+		Mat44f model2World = make_rotation_y(0);
+		Mat33f normalMatrix = mat44_to_mat33(transpose(invert(model2World)));
+
+		Mat44f Rx = make_rotation_x(state.camControl.theta);
+		Mat44f Ry = make_rotation_y(state.camControl.phi);
+		Mat44f T = kIdentity44f;
+
+		//camera movement vector is added to current movement
+		if (state.camControl.actionMoveForward)
+		{
+			state.camControl.movementVec.x -= kMovementPerSecond_* dt * sin(state.camControl.phi);
+			state.camControl.movementVec.z += kMovementPerSecond_* dt * cos(state.camControl.phi);
+			//state.camControl.movementVec += kMovementPerSecond_ * dt * Vec3f{ 0.f,0.f,1.f };
+		}
+	    if (state.camControl.actionMoveBackward)
+		{
+			state.camControl.movementVec.x += kMovementPerSecond_* dt * sin(state.camControl.phi);
+			state.camControl.movementVec.z -= kMovementPerSecond_* dt * cos(state.camControl.phi);
+			//state.camControl.movementVec -= kMovementPerSecond_ * dt * Vec3f{ 0.f,0.f,1.f };
+		}
+	    if (state.camControl.actionMoveLeft)
+		{
+			state.camControl.movementVec.x += kMovementPerSecond_ * dt * cos(state.camControl.phi);
+			state.camControl.movementVec.z += kMovementPerSecond_ * dt * sin(state.camControl.phi);
+			//state.camControl.movementVec += kMovementPerSecond_ * dt * Vec3f{ 1.f,0.f,0.f };
+		}
+	    if (state.camControl.actionMoveRight)
+		{
+			state.camControl.movementVec.x -= kMovementPerSecond_ * dt * cos(state.camControl.phi);
+			state.camControl.movementVec.z -= kMovementPerSecond_ * dt * sin(state.camControl.phi);
+			//state.camControl.movementVec -= kMovementPerSecond_ * dt * Vec3f{ 1.f,0.f,0.f };
+		}
+	    if (state.camControl.actionMoveUp)
+		{
+			state.camControl.movementVec -= kMovementPerSecond_ * dt * Vec3f{ 0.f,1.f,0.f };
+		}
+	    if (state.camControl.actionMoveDown)
+		{
+			state.camControl.movementVec += kMovementPerSecond_ * dt * Vec3f{ 0.f,1.f,0.f };
+		}
+
+		T = make_translation(state.camControl.movementVec);
+
+		Mat44f world2Camera = Rx * Ry * T;
+
+		//Mat44f world2Camera = make_translation({ 0.f, 0.f, -10.f });
+
+		Mat44f projection = make_perspective_projection(
+			60 * kPi_ / 180.f,			//FOV:60 converted to radians
+			fbwidth / float(fbheight), //aspect ratio
+			0.1f,					  //near plane
+			100.f					 //far plane
+		);
+
+		Mat44f projCameraWorld = projection * (world2Camera * model2World);
+
+		//ENDOF TODO
+
+		// Draw scene
+		OGL_CHECKPOINT_DEBUG();
+
+		//TODO: draw frame
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	
+		// Draw the map
+		mesh_renderer(vao, vertexCount,  state, textures, prog.programId(), projCameraWorld, normalMatrix);
+
+		// Draw the first launchpad
+		mesh_renderer(launch_vao_1, launchVertexCount, state, 0, prog2.programId(), projCameraWorld, normalMatrix);
+
+		// Draw the second launchpad
+		mesh_renderer(launch_vao_2, launchVertexCount, state, 0, prog2.programId(), projCameraWorld, normalMatrix);
+
+		glBindVertexArray(0);
+		//glBindVertexArray(1);
+
+		glUseProgram(0);
+		//glUseProgram(1);
+
+		//ENDOF TODO
+
+		OGL_CHECKPOINT_DEBUG();
+
+		// Display results
+		glfwSwapBuffers( window );
+	}
+
+	// Cleanup.
+	//TODO: additional cleanup
+	
+	return 0;
+}
+catch( std::exception const& eErr )
+{
+	std::fprintf( stderr, "Top-level Exception (%s):\n", typeid(eErr).name() );
+	std::fprintf( stderr, "%s\n", eErr.what() );
+	std::fprintf( stderr, "Bye.\n" );
+	return 1;
+}
+
+namespace
+{
 	void glfw_callback_error_( int aErrNum, char const* aErrDesc )
 	{
 		std::fprintf( stderr, "GLFW error: %s (%d)\n", aErrDesc, aErrNum );
@@ -147,436 +440,154 @@ namespace
 			return;
 		}
 
-		if (aAction == GLFW_PRESS || aAction == GLFW_REPEAT)
+		if (auto* state = static_cast<State_*>(glfwGetWindowUserPointer(aWindow)))
 		{
-			float currentFrame = glfwGetTime();
-			float deltaTime = currentFrame - lastFrame;
-			lastFrame = currentFrame;
-			float speed = baseSpeed * deltaTime;
-			
-			if (glfwGetKey(aWindow, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) 
-				speed *= 2.0f;
-			if (glfwGetKey(aWindow, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) 
-				speed *= 0.5f;
+			// R-key reloads shaders.
+			if (GLFW_KEY_R == aKey && GLFW_PRESS == aAction)
+			{
+				if (state->prog)
+				{
+					try
+					{
+						state->prog->reload();
+						std::fprintf(stderr, "Shaders reloaded and recompiled.\n");
+					}
+					catch (std::exception const& eErr)
+					{
+						std::fprintf(stderr, "Error when reloading shader:\n");
+						std::fprintf(stderr, "%s\n", eErr.what());
+						std::fprintf(stderr, "Keeping old shader.\n");
+					}
+				}
+			}
 
-			switch(aKey) {
-				case GLFW_KEY_W: // 前进
-					g_camera.position = g_camera.position + g_camera.front * speed;
-					break;
-				case GLFW_KEY_S: // 后退
-					g_camera.position = g_camera.position - g_camera.front * speed;
-					break;
-				case GLFW_KEY_A: // 左移
-					g_camera.position = g_camera.position - g_camera.right * speed;
-					break;
-				case GLFW_KEY_D: // 右移
-					g_camera.position = g_camera.position + g_camera.right * speed;
-					break;
-				case GLFW_KEY_E: // 上移
-					g_camera.position = g_camera.position + Vec3f{0.0f, 1.0f, 0.0f} * speed;
-					break;
-				case GLFW_KEY_Q: // 下移
-					g_camera.position = g_camera.position - Vec3f{0.0f, 1.0f, 0.0f} * speed;
-					break;
+			// TODO SHIFT INCREASES SPEED
+
+			if (GLFW_KEY_LEFT_SHIFT == aKey && GLFW_PRESS == aAction)
+				kMovementPerSecond_ *= 2.f;
+			else if (GLFW_KEY_LEFT_SHIFT == aKey && GLFW_RELEASE == aAction)
+				kMovementPerSecond_ /= 2.f;
+
+
+			// TODO CTRL DECREASES SPEED
+			if (GLFW_KEY_LEFT_CONTROL == aKey && GLFW_PRESS == aAction) 
+				kMovementPerSecond_ /= 2.f;
+			else if (GLFW_KEY_LEFT_CONTROL == aKey && GLFW_RELEASE == aAction)
+				kMovementPerSecond_ *= 2.f;
+
+
+			// Space toggles camera
+			if (GLFW_KEY_SPACE == aKey && GLFW_PRESS == aAction)
+			{
+				state->camControl.cameraActive = !state->camControl.cameraActive;
+
+				if (state->camControl.cameraActive)
+					glfwSetInputMode(aWindow, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+				else
+					glfwSetInputMode(aWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			}
+
+			// Camera controls if camera is active
+			if (state->camControl.cameraActive)
+			{
+				if (GLFW_KEY_W == aKey)
+				{
+					if (GLFW_PRESS == aAction)
+						state->camControl.actionMoveForward = true;
+					else if (GLFW_RELEASE == aAction)
+						state->camControl.actionMoveForward = false;
+				}
+				else if (GLFW_KEY_S == aKey)
+				{
+					if (GLFW_PRESS == aAction)
+						state->camControl.actionMoveBackward = true;
+					else if (GLFW_RELEASE == aAction)
+						state->camControl.actionMoveBackward = false;
+				}
+				else if (GLFW_KEY_A == aKey)
+				{
+					if (GLFW_PRESS == aAction)
+						state->camControl.actionMoveLeft = true;
+					else if (GLFW_RELEASE == aAction)
+						state->camControl.actionMoveLeft = false;
+				}
+				else if (GLFW_KEY_D == aKey)
+				{
+					if (GLFW_PRESS == aAction)
+						state->camControl.actionMoveRight = true;
+					else if (GLFW_RELEASE == aAction)
+						state->camControl.actionMoveRight = false;
+				}
+				else if (GLFW_KEY_Q == aKey)
+				{
+					if (GLFW_PRESS == aAction)
+						state->camControl.actionMoveDown = true;
+					else if (GLFW_RELEASE == aAction)
+						state->camControl.actionMoveDown = false;
+				}
+				else if (GLFW_KEY_E == aKey)
+				{
+					if (GLFW_PRESS == aAction)
+						state->camControl.actionMoveUp = true;
+					else if (GLFW_RELEASE == aAction)
+						state->camControl.actionMoveUp = false;
+				}
+				else if (GLFW_KEY_RIGHT_SHIFT == aKey)
+				{
+					if (GLFW_PRESS == aAction)
+						kMovementPerSecond_ *= 2.f;
+					else if (GLFW_RELEASE == aAction)
+						kMovementPerSecond_ /= 2.f;
+				}
+				else if (GLFW_KEY_RIGHT_CONTROL == aKey)
+				{
+					if (GLFW_PRESS == aAction)
+						kMovementPerSecond_ /= 2.f;
+					else if (GLFW_RELEASE == aAction)
+						kMovementPerSecond_ *= 2.f;
+				}
 			}
 		}
 	}
 
-    void load_mesh_(const std::string& path)
+	void glfw_callback_motion_(GLFWwindow* aWindow, double aX, double aY)
 	{
-		auto result = rapidobj::ParseFile(path);
-		if (result.error) {
-			throw Error("Failed to load OBJ file");
-		}
+		if (auto* state = static_cast<State_*>(glfwGetWindowUserPointer(aWindow)))
+		{
+			if (state->camControl.cameraActive)
+			{
+				auto const dx = float(aX - state->camControl.lastX);
+				auto const dy = float(aY - state->camControl.lastY);
 
-		auto& attrib = result.attributes;
-		g_vertices.clear();
-		g_normals.clear();
-		g_texcoords.clear(); // Clear texture coordinates
+				state->camControl.phi += dx * kMouseSensitivity_;
 
-		for (const auto& shape : result.shapes) {
-			for (const auto& index : shape.mesh.indices) {
-				// Vertex position
-				g_vertices.push_back(attrib.positions[3 * index.position_index + 0]);
-				g_vertices.push_back(attrib.positions[3 * index.position_index + 1]);
-				g_vertices.push_back(attrib.positions[3 * index.position_index + 2]);
-
-				// normal
-				if (index.normal_index >= 0) {
-					g_normals.push_back(attrib.normals[3 * index.normal_index + 0]);
-					g_normals.push_back(attrib.normals[3 * index.normal_index + 1]);
-					g_normals.push_back(attrib.normals[3 * index.normal_index + 2]);
-				}
-
-				// texture coordinate
-				if (index.texcoord_index >= 0) {
-					g_texcoords.push_back(attrib.texcoords[2 * index.texcoord_index + 0]);
-					g_texcoords.push_back(attrib.texcoords[2 * index.texcoord_index + 1]);
-				}
+				state->camControl.theta += dy * kMouseSensitivity_;
+				if (state->camControl.theta > kPi_ / 2.f)
+					state->camControl.theta = kPi_ / 2.f;
+				else if (state->camControl.theta < -kPi_ / 2.f)
+					state->camControl.theta = -kPi_ / 2.f;
 			}
+
+			state->camControl.lastX = float(aX);
+			state->camControl.lastY = float(aY);
 		}
-
-		// Create and bind VAO
-		glGenVertexArrays(1, &g_vao);
-		glBindVertexArray(g_vao);
-
-		// Create and bind VBO
-		glGenBuffers(1, &g_vbo);
-		glBindBuffer(GL_ARRAY_BUFFER, g_vbo);
-
-		// Combined vertex data
-		std::vector<float> vertex_data;
-		for (size_t i = 0; i < g_vertices.size() / 3; ++i) {
-			// location
-			vertex_data.push_back(g_vertices[i * 3 + 0]);
-			vertex_data.push_back(g_vertices[i * 3 + 1]);
-			vertex_data.push_back(g_vertices[i * 3 + 2]);
-			
-			// normal
-			vertex_data.push_back(g_normals[i * 3 + 0]);
-			vertex_data.push_back(g_normals[i * 3 + 1]);
-			vertex_data.push_back(g_normals[i * 3 + 2]);
-			
-			if (!g_texcoords.empty()) {
-				vertex_data.push_back(g_texcoords[i * 2 + 0]);
-				vertex_data.push_back(g_texcoords[i * 2 + 1]);
-			} else {
-				// default values
-				vertex_data.push_back(0.0f);
-				vertex_data.push_back(0.0f);
-			}
-		}
-
-		// Transfer the data to the GPU
-		glBufferData(GL_ARRAY_BUFFER, vertex_data.size() * sizeof(float), 
-					vertex_data.data(), GL_STATIC_DRAW);
-
-		// Configuring vertex properties
-		// Location attribute
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
-		glEnableVertexAttribArray(0);
-
-		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), 
-							(void*)(3 * sizeof(float)));
-		glEnableVertexAttribArray(1);
-
-		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), 
-							(void*)(6 * sizeof(float)));
-		glEnableVertexAttribArray(2);
-
-		glBindBuffer(GL_ARRAY_BUFFER, 0);
-		glBindVertexArray(0);
 	}
 
-	void load_texture_(const std::string& path) {
-		glGenTextures(1, &g_texture);
-		glBindTexture(GL_TEXTURE_2D, g_texture);
-		
-		// Set texture wrapping/filtering options
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-		
-		// Load image data
-		int width, height, channels;
-		unsigned char* data = stbi_load(path.c_str(), &width, &height, &channels, 0);
-		if (data) {
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-			glGenerateMipmap(GL_TEXTURE_2D);
-		} else {
-			throw Error("Failed to load texture");
-		}
-		stbi_image_free(data);
+}
+
+namespace
+{
+	GLFWCleanupHelper::~GLFWCleanupHelper()
+	{
+		glfwTerminate();
 	}
 
-    void render_scene_(int iwidth, int iheight)
-    {
-        glUseProgram(g_shaderProgram);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-		glActiveTexture(GL_TEXTURE0);
-    	glBindTexture(GL_TEXTURE_2D, g_texture);
-
-		float aspect = float(iwidth) / float(iheight);
-		Mat44f projection = make_perspective_projection(
-			45.0f * M_PI / 180.0f,  // FOV
-			aspect,                  // aspect ratio
-			0.1f,                   // Near plane
-			100.0f                  // Far plane
-		);
-
-        Mat44f view_matrix = make_translation(-g_camera.position);
-        Mat44f rotation_x = make_rotation_x(g_camera.pitch * M_PI / 180.0f);
-        Mat44f rotation_y = make_rotation_y(g_camera.yaw * M_PI / 180.0f);
-        Mat44f view = rotation_x * rotation_y * view_matrix;
-
-		// Modified to include a projection matrix
-		Mat44f pv = projection * view;  // Perspective matrix * View matrix
-
-		// Update the matrix in the shader
-		GLint pv_loc = glGetUniformLocation(g_shaderProgram, "pv");
-		if (pv_loc != -1) {
-			glUniformMatrix4fv(pv_loc, 1, GL_FALSE, pv.v);
-		}
-
-        Vec3f lightDir = normalize(Vec3f{0.0f, 1.0f, -1.0f});
-        GLint lightDirLoc = glGetUniformLocation(g_shaderProgram, "lightDir");
-        if (lightDirLoc != -1) {
-            glUniform3fv(lightDirLoc, 1, &lightDir.x);
-        }
-
-		GLint texLoc = glGetUniformLocation(g_shaderProgram, "texture1");
-		if (texLoc != -1) {
-			glUniform1i(texLoc, 0);
-		}
-
-        Vec3f lightColor{1.0f, 1.0f, 1.0f};
-        GLint lightColorLoc = glGetUniformLocation(g_shaderProgram, "lightColor");
-        if (lightColorLoc != -1) {
-            glUniform3fv(lightColorLoc, 1, &lightColor.x);
-        }
-
-        glBindVertexArray(g_vao);
-        glDrawArrays(GL_TRIANGLES, 0, g_vertices.size() / 3);
-        glBindVertexArray(0);
-    }
-
-    GLuint create_shader_program_(const char* vertex_source, const char* fragment_source)
-    {
-        GLuint vertex_shader = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vertex_shader, 1, &vertex_source, nullptr);
-        glCompileShader(vertex_shader);
-
-        GLint success;
-        glGetShaderiv(vertex_shader, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            GLchar infoLog[512];
-            glGetShaderInfoLog(vertex_shader, 512, nullptr, infoLog);
-            throw Error("Vertex shader compilation failed: %s", infoLog);
-        }
-
-        GLuint fragment_shader = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fragment_shader, 1, &fragment_source, nullptr);
-        glCompileShader(fragment_shader);
-
-        glGetShaderiv(fragment_shader, GL_COMPILE_STATUS, &success);
-        if (!success) {
-            GLchar infoLog[512];
-            glGetShaderInfoLog(fragment_shader, 512, nullptr, infoLog);
-            throw Error("Fragment shader compilation failed: %s", infoLog);
-        }
-
-        GLuint program = glCreateProgram();
-        glAttachShader(program, vertex_shader);
-        glAttachShader(program, fragment_shader);
-        glLinkProgram(program);
-
-        glGetProgramiv(program, GL_LINK_STATUS, &success);
-        if (!success) {
-            GLchar infoLog[512];
-            glGetProgramInfoLog(program, 512, nullptr, infoLog);
-            throw Error("Shader program linking failed: %s", infoLog);
-        }
-
-        glDeleteShader(vertex_shader);
-        glDeleteShader(fragment_shader);
-
-        return program;
-    }
-
-    GLFWCleanupHelper::~GLFWCleanupHelper()
-    {
-        glfwTerminate();
-    }
-
-    GLFWWindowDeleter::~GLFWWindowDeleter()
-    {
-        if(window)
-            glfwDestroyWindow(window);
-    }
+	GLFWWindowDeleter::~GLFWWindowDeleter()
+	{
+		if( window )
+			glfwDestroyWindow( window );
+	}
 }
 
-const char* kVertexShaderSource = R"(
-    #version 330 core
-    layout(location = 0) in vec3 aPos;
-    layout(location = 1) in vec3 aNormal;
-    layout(location = 2) in vec2 aTexCoord;
+//different use program 
 
-    out vec3 FragPos;
-    out vec3 Normal;
-    out vec2 TexCoord;
-
-    uniform mat4 pv;
-
-    void main()
-    {
-        gl_Position = pv * vec4(aPos, 1.0);
-        FragPos = aPos;
-        Normal = aNormal;
-        TexCoord = aTexCoord;
-    }
-)";
-
-const char* kFragmentShaderSource = R"(
-    #version 330 core
-    in vec3 Normal;
-    in vec2 TexCoord;
-    out vec4 FragColor;
-
-    uniform vec3 lightDir;
-    uniform vec3 lightColor;
-    uniform sampler2D texture1;
-
-    void main()
-    {
-        // Ambient
-        float ambientStrength = 0.1;
-        vec3 ambient = ambientStrength * lightColor;
-
-        // Diffuse
-        vec3 norm = normalize(Normal);
-        vec3 lightDirNorm = normalize(lightDir);
-        float diff = max(dot(norm, lightDirNorm), 0.0);
-        vec3 diffuse = lightColor * diff;
-
-        // Combine lighting with texture
-        vec3 texColor = texture(texture1, TexCoord).rgb;
-        vec3 result = (ambient + diffuse) * texColor;
-        FragColor = vec4(result, 1.0);
-    }
-)";
-
-int main() try
-{
-    // Initialize GLFW
-    if( GLFW_TRUE != glfwInit() )
-    {
-        char const* msg = nullptr;
-        int ecode = glfwGetError( &msg );
-        throw Error( "glfwInit() failed with '%s' (%d)", msg, ecode );
-    }
-
-    GLFWCleanupHelper cleanupHelper;
-
-    // Configure GLFW and create window
-    glfwSetErrorCallback( &glfw_callback_error_ );
-
-    glfwWindowHint( GLFW_SRGB_CAPABLE, GLFW_TRUE );
-    glfwWindowHint( GLFW_DOUBLEBUFFER, GLFW_TRUE );
-
-    glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 4 );
-    glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 1 );
-    glfwWindowHint( GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE );
-    glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE );
-
-    glfwWindowHint( GLFW_DEPTH_BITS, 24 );
-
-#   if !defined(NDEBUG)
-    glfwWindowHint( GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE );
-#   endif // ~ !NDEBUG
-
-    GLFWwindow* window = glfwCreateWindow(
-        1280,
-        720,
-        kWindowTitle,
-        nullptr, nullptr
-    );
-
-    if( !window )
-    {
-        char const* msg = nullptr;
-        int ecode = glfwGetError( &msg );
-        throw Error( "glfwCreateWindow() failed with '%s' (%d)", msg, ecode );
-    }
-
-    GLFWWindowDeleter windowDeleter{ window };
-
-    // Set up event handling
-    glfwSetKeyCallback(window, &glfw_callback_key_);
-    glfwSetMouseButtonCallback(window, &glfw_callback_mouse_button_);
-    glfwSetCursorPosCallback(window, &glfw_callback_mouse_);
-
-    // Set up drawing stuff
-    glfwMakeContextCurrent(window);
-    glfwSwapInterval(1); // V-Sync is on.
-
-    // Initialize GLAD
-    if(!gladLoadGLLoader((GLADloadproc)&glfwGetProcAddress))
-        throw Error("gladLoadGLLoader() failed - cannot load GL API!");
-
-    std::printf("RENDERER %s\n", glGetString(GL_RENDERER));
-    std::printf("VENDOR %s\n", glGetString(GL_VENDOR));
-    std::printf("VERSION %s\n", glGetString(GL_VERSION));
-    std::printf("SHADING_LANGUAGE_VERSION %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
-
-#   if !defined(NDEBUG)
-    setup_gl_debug_output();
-#   endif // ~ !NDEBUG
-
-    // Load mesh and create shaders
-    load_mesh_("assets/parlahti.obj");
-    g_shaderProgram = create_shader_program_(kVertexShaderSource, kFragmentShaderSource);
-	load_texture_("assets/L4343A-4k.jpeg");
-
-    // Get actual framebuffer size
-    int iwidth, iheight;
-    glfwGetFramebufferSize(window, &iwidth, &iheight);
-    glViewport(0, 0, iwidth, iheight);
-
-    // Global GL state
-    glClearColor(0.4f, 0.4f, 0.4f, 1.0f);
-    glEnable(GL_DEPTH_TEST);
-
-    // Main loop
-    while(!glfwWindowShouldClose(window))
-    {
-        // Let GLFW process events
-        glfwPollEvents();
-        
-        // Check if window was resized
-        float fbwidth, fbheight;
-        {
-            int nwidth, nheight;
-            glfwGetFramebufferSize(window, &nwidth, &nheight);
-
-            fbwidth = float(nwidth);
-            fbheight = float(nheight);
-
-            if(0 == nwidth || 0 == nheight)
-            {
-                // Window minimized? Pause until it is unminimized.
-                do
-                {
-                    glfwWaitEvents();
-                    glfwGetFramebufferSize(window, &nwidth, &nheight);
-                } while(0 == nwidth || 0 == nheight);
-            }
-
-            glViewport(0, 0, nwidth, nheight);
-        }
-
-        // Draw scene
-        OGL_CHECKPOINT_DEBUG();
-        render_scene_(iwidth, iheight);
-        OGL_CHECKPOINT_DEBUG();
-
-        // Display results
-        glfwSwapBuffers(window);
-    }
-
-    // Cleanup
-    glDeleteVertexArrays(1, &g_vao);
-    glDeleteBuffers(1, &g_vbo);
-    glDeleteProgram(g_shaderProgram);
-	glDeleteTextures(1, &g_texture);
-
-    return 0;
-}
-catch(std::exception const& eErr)
-{
-    std::fprintf(stderr, "Top-level Exception (%s):\n", typeid(eErr).name());
-    std::fprintf(stderr, "%s\n", eErr.what());
-    std::fprintf(stderr, "Bye.\n");
-    return 1;
-}

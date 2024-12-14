@@ -95,10 +95,23 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="cone.hpp" />
+    <ClInclude Include="cube.hpp" />
+    <ClInclude Include="cylinder.hpp" />
     <ClInclude Include="defaults.hpp" />
+    <ClInclude Include="loadcustom.hpp" />
+    <ClInclude Include="loadobj.hpp" />
+    <ClInclude Include="simple_mesh.hpp" />
+    <ClInclude Include="texture.hpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="cone.cpp" />
+    <ClCompile Include="cylinder.cpp" />
+    <ClCompile Include="loadcustom.cpp" />
+    <ClCompile Include="loadobj.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="simple_mesh.cpp" />
+    <ClCompile Include="texture.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\vmlib\vmlib.vcxproj">

@@ -29,26 +29,38 @@ struct Mat22f
 constexpr
 Mat22f operator*( Mat22f const& aLeft, Mat22f const& aRight ) noexcept
 {
-	//TODO: your implementation goes here
-	//TODO: your implementation goes here
-	//TODO: your implementation goes here
+	//we declare the matrix here
+	Mat22f multipliedMatrix
+	{
+	};
 
-	//TODO: remove the following when you start your implementation
-	(void)aLeft; // Avoid warnings about unused arguments until the function
-	(void)aRight;  // is properly implemented.
-	return Mat22f{ 1.f, 0.f, 0.f, 1.f };
+	//accessing mat22f matrix notes
+	// ._00 TOP LEFT   ._01 TOP RIGHT
+	// ._10 TOP RIGHT  ._11 TOP LEFT
+
+	//TOP LEFT
+	multipliedMatrix._00 = (aLeft._00 * aRight._00) + (aLeft._01 * aRight._10);
+	//TOP RIGHT
+	multipliedMatrix._01 = (aLeft._00 * aRight._01) + (aLeft._01 * aRight._11);
+	//BOT LEFT
+	multipliedMatrix._10 = (aLeft._10 * aRight._00) + (aLeft._11 * aRight._10);
+	//BOT RIGHT
+	multipliedMatrix._11 = (aLeft._10 * aRight._01) + (aLeft._11 * aRight._11);
+
+	return multipliedMatrix; // Return the resulting matrix.
 }
 
 constexpr
 Vec2f operator*( Mat22f const& aLeft, Vec2f const& aRight ) noexcept
 {
-	//TODO: your implementation goes here
-	//TODO: your implementation goes here
-	//TODO: your implementation goes here
+	//we declare vector here
+	Vec2f matrixvectorMultiplied
+	{							};
 
-	//TODO: remove the following when you start your implementation
-	(void)aLeft; // Avoid warnings about unused arguments until the function
-	return aRight;
+	matrixvectorMultiplied.x = (aLeft._00 * aRight.x) + (aLeft._01 * aRight.y);
+	matrixvectorMultiplied.y = (aLeft._10 * aRight.x) + (aLeft._11 * aRight.y);
+
+	return matrixvectorMultiplied;
 }
 
 // Functions:
@@ -56,14 +68,21 @@ Vec2f operator*( Mat22f const& aLeft, Vec2f const& aRight ) noexcept
 inline
 Mat22f make_rotation_2d( float aAngle ) noexcept
 {
-	//TODO: your implementation goes here
-	//TODO: your implementation goes here
-	//TODO: your implementation goes here
+	//declare matrix
+	Mat22f rotationMatrix
+	{
+	};
 
-	//TODO: remove the following when you start your implementation
-	(void)aAngle; // Avoid warnings about unused arguments until the function
-	              // is properly implemented.
-	return Mat22f{ 1.f, 0.f, 0.f, 1.f };
+	//here we get the cosine and sin of 'aAngle'
+	float cosTheta = std::cos(aAngle);
+	float sinTheta = std::sin(aAngle);
+
+	rotationMatrix._00 = cosTheta;
+	rotationMatrix._01 = -sinTheta;
+	rotationMatrix._10 = sinTheta;
+	rotationMatrix._11 = cosTheta;
+
+	return rotationMatrix;
 }
 
 #endif // MAT22_HPP_1F974C02_D0D1_4FBD_B5EE_A69C88112088
