@@ -20,42 +20,38 @@
 
 #include "cylinder.hpp"
 #include "cone.hpp"
-#include "loadobj.hpp"
-#include "simple_mesh.hpp"
-#include "loadcustom.hpp"
-
 #include "cube.hpp"
+#include "loadcustom.hpp"
+#include "loadobj.hpp"
 #include "texture.hpp"
+#include "simple_mesh.hpp"
 
 #include "fontstash.h"
+
 
 namespace
 {
 	constexpr char const* kWindowTitle = "COMP3811 - CW2";
-
+	//by sandra
 	constexpr float kPi_ = 3.1415926f;
 
-	float kMovementPerSecond_ = 5.f; // units per second
+	float kMovementSpeed = 5.f; // units per second
 	float kMouseSensitivity_ = 0.01f; // radians per pixel
-	struct State_ //struct for camera control
+	struct GraphicsState
 	{
-		ShaderProgram* prog;
+		ShaderProgram* shaderProg;
 
-		struct CamCtrl_
+		struct CameraControl
 		{
-			bool cameraActive;
-			bool actionZoomIn, actionZoomOut;
-			bool actionZoomleft, actionZoomRight;
-			bool actionMoveForward, actionMoveBackward;
-			bool actionMoveLeft, actionMoveRight;
-			bool actionMoveUp, actionMoveDown;
+			bool isCameraActive, zoomIn, zoomOut, zoomLeft, zoomRight;
+			bool moveForward, moveBackward, moveLeft, moveRight, moveUp, moveDown;
+			
+			float pitch, yaw;
+			float distance;
+			Vec3f movementDirection;
 
-			float phi, theta;
-			float radius;
-			Vec3f movementVec;
-
-			float lastX, lastY;
-		} camControl;
+			float prevX, prevY;
+		} cameraControl;
 	};
 
 	void glfw_callback_error_( int, char const* );
@@ -76,51 +72,44 @@ namespace
 
 namespace
 {
-	// Mesh rendering
-	void mesh_renderer(
-		GLuint vao,
-		size_t vertexCount,
-		State_ const& state,
-		GLuint textureObjectId,
-		GLuint programID,
-		Mat44f projCameraWorld,
+	// Mesh rendering function
+	void renderMesh(
+		GLuint vertexArrayObj,
+		size_t numVertices,
+		const GraphicsState& graphicsState,
+		GLuint textureID,
+		GLuint shaderID,
+		Mat44f projectionViewMatrix,
 		Mat33f normalMatrix
-		//Mat44f localTransform
 	)
 	{
-		glUseProgram(programID);
+		glUseProgram(shaderID);
 
-		// for camera
-		glUniformMatrix4fv(
-			0,
-			1, GL_TRUE,
-			projCameraWorld.v);
+		// Set projection-view matrix for camera
+		glUniformMatrix4fv(0, 1, GL_TRUE, projectionViewMatrix.v);
 
-		//for normals
-		glUniformMatrix3fv(
-			1,
-			1, GL_TRUE,
-			normalMatrix.v);
+		// Set normal matrix
+		glUniformMatrix3fv(1, 1, GL_TRUE, normalMatrix.v);
 
-		Vec3f lightDir = normalize(Vec3f{ 0.f, 1.f, -1.f });
+		Vec3f lightDirection = normalize(Vec3f{ 0.f, 1.f, -1.f });
 
-		glUniform3fv(2, 1, &lightDir.x);      // Ambient 
-		glUniform3f(3, 0.9f, 0.9f, 0.9f);	  // Diffusion
-		glUniform3f(4, 0.05f, 0.05f, 0.05f);  // Spectral
+		glUniform3fv(2, 1, &lightDirection.x);      // Ambient light 
+		glUniform3f(3, 0.9f, 0.9f, 0.9f);          // Diffuse light
+		glUniform3f(4, 0.05f, 0.05f, 0.05f);       // Specular light
 
-		glBindVertexArray(vao);
-		if (textureObjectId != 0)
-		{	glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, textureObjectId);
+		glBindVertexArray(vertexArrayObj);
+		if (textureID != 0)
+		{
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, textureID);
 		}
 		else
 		{
 			glBindTexture(GL_TEXTURE_2D, 0);
 		}
 
-		glDrawArrays(GL_TRIANGLES, 0, vertexCount);
+		glDrawArrays(GL_TRIANGLES, 0, numVertices);
 	}
-
 }
 
 
@@ -135,109 +124,82 @@ int main() try
 	}
 
 	// Ensure that we call glfwTerminate() at the end of the program.
-	GLFWCleanupHelper cleanupHelper;
+	GLFWCleanupHelper resourceCleaner;
 
 	// Configure GLFW and create window
-	glfwSetErrorCallback( &glfw_callback_error_ );
+	glfwSetErrorCallback( &glfw_callback_error_);
 
 	glfwWindowHint( GLFW_SRGB_CAPABLE, GLFW_TRUE );
 	glfwWindowHint( GLFW_DOUBLEBUFFER, GLFW_TRUE );
-
-	//glfwWindowHint( GLFW_RESIZABLE, GLFW_FALSE );
 
 	glfwWindowHint( GLFW_CONTEXT_VERSION_MAJOR, 4 );
 	glfwWindowHint( GLFW_CONTEXT_VERSION_MINOR, 3 );
 	glfwWindowHint( GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE );
 	glfwWindowHint( GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE );
-
 	glfwWindowHint(GLFW_DEPTH_BITS, 24);
 
-#	if !defined(NDEBUG)
-	// When building in debug mode, request an OpenGL debug context. This
-	// enables additional debugging features. However, this can carry extra
-	// overheads. We therefore do not do this for release builds.
-	glfwWindowHint( GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE );
-#	endif // ~ !NDEBUG
+#if !defined(NDEBUG)
+	// Request OpenGL debug context for debugging mode
+	glfwWindowHint(GLFW_OPENGL_DEBUG_CONTEXT, GLFW_TRUE);
+#endif
 
-	GLFWwindow* window = glfwCreateWindow(
-		1280,
-		720,
-		kWindowTitle,
-		nullptr, nullptr
-	);
+	GLFWwindow* window = glfwCreateWindow(1280, 720, "Graphics Engine", nullptr, nullptr);
 
-	if( !window )
+	if (!window)
 	{
-		char const* msg = nullptr;
-		int ecode = glfwGetError( &msg );
-		throw Error( "glfwCreateWindow() failed with '%s' (%d)", msg, ecode );
+		const char* errorMsg = nullptr;
+		int errorCode = glfwGetError(&errorMsg);
+		throw Error("glfwCreateWindow() failed with '%s' (%d)", errorMsg, errorCode);
 	}
 
 	GLFWWindowDeleter windowDeleter{ window };
 
 	// Set up event handling
-	State_ state{};
-
-	//TODO: Additional event handling setup
-	//setting up keyboard event handling
-	glfwSetWindowUserPointer(window, &state);
+	GraphicsState graphicsState{};
+	glfwSetWindowUserPointer(window, &graphicsState);
 	glfwSetKeyCallback(window, &glfw_callback_key_);
-	glfwSetCursorPosCallback(window, &glfw_callback_motion_); //!!need to make this frame-rate independent
-	//endofTODO
+	glfwSetCursorPosCallback(window, &glfw_callback_motion_);
 
-	glfwSetKeyCallback( window, &glfw_callback_key_ );
+	// Set up OpenGL context
+	glfwMakeContextCurrent(window);
+	glfwSwapInterval(1); // Enable V-Sync
 
-	// Set up drawing stuff
-	glfwMakeContextCurrent( window );
-	glfwSwapInterval( 1 ); // V-Sync is on.
-
-	// Initialize GLAD
-	// This will load the OpenGL API. We mustn't make any OpenGL calls before this!
-	if( !gladLoadGLLoader( (GLADloadproc)&glfwGetProcAddress ) )
-		throw Error( "gladLoaDGLLoader() failed - cannot load GL API!" );
+	// Initialize GLAD (to load OpenGL functions)
+	if (!gladLoadGLLoader((GLADloadproc)&glfwGetProcAddress))
+		throw Error("gladLoadGLLoader() failed - cannot load GL API!");
 
 	std::printf( "RENDERER %s\n", glGetString( GL_RENDERER ) );
 	std::printf( "VENDOR %s\n", glGetString( GL_VENDOR ) );
 	std::printf( "VERSION %s\n", glGetString( GL_VERSION ) );
 	std::printf( "SHADING_LANGUAGE_VERSION %s\n", glGetString( GL_SHADING_LANGUAGE_VERSION ) );
 
-	// Ddebug output
-#	if !defined(NDEBUG)
+#if !defined(NDEBUG)
 	setup_gl_debug_output();
-#	endif // ~ !NDEBUG
+#endif
 
-	// Global GL state
+	// Global GL state setup
 	OGL_CHECKPOINT_ALWAYS();
-
-	// TODO: global GL setup goes here
 	glEnable(GL_FRAMEBUFFER_SRGB);
 	glEnable(GL_CULL_FACE);
 	glEnable(GL_DEPTH_TEST);
 	glClearColor(0.2f, 0.2f, 0.2f, 0.2f);
-	//endofTODO
-
 	OGL_CHECKPOINT_ALWAYS();
 
-	// Get actual framebuffer size.
-	// This can be different from the window size, as standard window
-	// decorations (title bar, borders, ...) may be included in the window size
-	// but not be part of the drawable surface area.
-	int iwidth, iheight;
-	glfwGetFramebufferSize( window, &iwidth, &iheight );
-
-	glViewport( 0, 0, iwidth, iheight );
+	// Get framebuffer size
+	int width, height;
+	glfwGetFramebufferSize(window, &width, &height);
+	glViewport(0, 0, width, height);
 
 	// Load shader program
-	ShaderProgram prog({
+	ShaderProgram shaderProgram({
 		{ GL_VERTEX_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\default.vert" },
 		{ GL_FRAGMENT_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\default.frag" }
 		});
+	graphicsState.shaderProg = &shaderProgram;
+	graphicsState.cameraControl.distance = 10.f;
 
-	state.prog = &prog; //set shader program to state
-	state.camControl.radius = 10.f; //set initial radius
-
-	auto last = Clock::now();
-	float angle = 0.f;
+	auto lastFrame = Clock::now();
+	float rotationAngle = 0.f;
 
 	auto parlahti = load_wavefront_obj("C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\parlahti.obj");
 	GLuint vao = create_vao(parlahti);
@@ -245,176 +207,134 @@ int main() try
 
 	GLuint textures = load_texture_2d("C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\L4343A-4k.jpeg");
 
-	//----------------------------------------------------------------
-	//load shader program for launchpad
-	 ShaderProgram prog2({
-	 	{ GL_VERTEX_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\launch.vert" }, 
-	 	{ GL_FRAGMENT_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\launch.frag" } 
-	 	}); 
+	// Load additional shader program for launchpad
+	ShaderProgram prog2({
+		{ GL_VERTEX_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\launch.vert" }, 
+		{ GL_FRAGMENT_SHADER, "C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\launch.frag" } 
+	}); 
 
-	//state.prog = &prog2;  //set shader program to state
+	// Load and modify launchpad model
+	auto launchpad = load_wavefront_obj("C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\landingpad.obj");
+	std::size_t launchpadVertexCount = launchpad.positions.size();
+	std::vector<Vec3f> originalPositions = launchpad.positions;
 
-	 // Load the launchpad
-	 auto launch = load_wavefront_obj("C:\\Users\\32939\\Desktop\\graphics-engine-master\\assets\\landingpad.obj");
-	 std::size_t launchVertexCount = launch.positions.size();
-	 std::vector<Vec3f> positions = launch.positions;
+	// Move first launchpad model
+	for (size_t i = 0; i < launchpadVertexCount; i++)
+	{
+		launchpad.positions[i] += Vec3f{ 0.f, -0.975f, -50.f };
+	}
 
-	 // Move the 1st launch object
-	 for (size_t i = 0; i < launchVertexCount; i++)
-	 {
-		 launch.positions[i] = launch.positions[i] + Vec3f{ 0.f, -0.975f, -50.f };
-	 }
+	GLuint launchpadVAO1 = create_vao(launchpad);
 
-	 // Create a VAO for the first launchpad
-	 GLuint launch_vao_1 = create_vao(launch);
+	// Restore positions and move second launchpad model
+	launchpad.positions = originalPositions;
+	for (size_t i = 0; i < launchpadVertexCount; i++)
+	{
+		launchpad.positions[i] += Vec3f{ -50.f, -0.975f, -20.f };
+	}
+	GLuint launchpadVAO2 = create_vao(launchpad);
 
-	 // Return positions back to normal
-	 launch.positions = positions;
-
-	 // Move the 1st launch object
-	 for (size_t i = 0; i < launchVertexCount; i++)
-	 {
-		 launch.positions[i] = launch.positions[i] + Vec3f{ -20.f, -0.975f, -15.f };
-	 }
-	 // Create a VAO for the first launchpad
-	 GLuint launch_vao_2 = create_vao(launch);
-
-	//-------------------------------------------------------------------
-
-	 // Draw all arrays
-
-
-	// Other initialization & loading
 	OGL_CHECKPOINT_ALWAYS();
 
-	// Main loop
-	while( !glfwWindowShouldClose( window ) )
+	// Main rendering loop
+	while (!glfwWindowShouldClose(window))
 	{
-		// Let GLFW process events
 		glfwPollEvents();
-		
-		// Check if window was resized.
-		float fbwidth, fbheight;
+
+		// Handle window resize
+		float framebufferWidth, framebufferHeight;
+		int newWidth, newHeight;
+		glfwGetFramebufferSize(window, &newWidth, &newHeight);
+		framebufferWidth = static_cast<float>(newWidth);
+		framebufferHeight = static_cast<float>(newHeight);
+
+		if (newWidth == 0 || newHeight == 0)
 		{
-			int nwidth, nheight;
-			glfwGetFramebufferSize( window, &nwidth, &nheight );
-
-			fbwidth = float(nwidth);
-			fbheight = float(nheight);
-
-			if( 0 == nwidth || 0 == nheight )
+			do
 			{
-				// Window minimized? Pause until it is unminimized.
-				// This is a bit of a hack.
-				do
-				{
-					glfwWaitEvents();
-					glfwGetFramebufferSize( window, &nwidth, &nheight );
-				} while( 0 == nwidth || 0 == nheight );
-			}
-
-			glViewport( 0, 0, nwidth, nheight );
+				glfwWaitEvents();
+				glfwGetFramebufferSize(window, &newWidth, &newHeight);
+			} while (newWidth == 0 || newHeight == 0);
 		}
 
-		//TODO: update state
-		auto const now = Clock::now();
-		float dt = std::chrono::duration_cast<Secondsf>(now - last).count(); //difference in time since last frame
-		last = now;
+		glViewport(0, 0, newWidth, newHeight);
 
-		angle += dt * kPi_ * 0.3f;
-		if (angle >= 2.f * kPi_)
-			angle -= 2.f * kPi_;
+		auto const currentFrame = Clock::now();
+		float deltaTime = std::chrono::duration_cast<Secondsf>(currentFrame - lastFrame).count(); //difference in time since last frame
+		lastFrame = currentFrame;
 
-		Mat44f model2World = make_rotation_y(0);
-		Mat33f normalMatrix = mat44_to_mat33(transpose(invert(model2World)));
+		rotationAngle += deltaTime * kPi_ * 0.3f;
+		if (rotationAngle >= 2.f * kPi_)
+			rotationAngle -= 2.f * kPi_;
 
-		Mat44f Rx = make_rotation_x(state.camControl.theta);
-		Mat44f Ry = make_rotation_y(state.camControl.phi);
-		Mat44f T = kIdentity44f;
+		Mat44f modelToWorld = make_rotation_y(0);
+		Mat33f normalMat = mat44_to_mat33(transpose(invert(modelToWorld)));
 
-		//camera movement vector is added to current movement
-		if (state.camControl.actionMoveForward)
+		Mat44f rotationX = make_rotation_x(graphicsState.cameraControl.pitch);
+		Mat44f rotationY = make_rotation_y(graphicsState.cameraControl.yaw);
+		Mat44f translation = kIdentity44f;
+		
+		// Camera movement
+		if (graphicsState.cameraControl.moveForward)
 		{
-			state.camControl.movementVec.x -= kMovementPerSecond_* dt * sin(state.camControl.phi);
-			state.camControl.movementVec.z += kMovementPerSecond_* dt * cos(state.camControl.phi);
-			//state.camControl.movementVec += kMovementPerSecond_ * dt * Vec3f{ 0.f,0.f,1.f };
+			graphicsState.cameraControl.movementDirection.x -= kMovementSpeed * deltaTime * sin(graphicsState.cameraControl.yaw);
+			graphicsState.cameraControl.movementDirection.z += kMovementSpeed * deltaTime * cos(graphicsState.cameraControl.yaw);
 		}
-	    if (state.camControl.actionMoveBackward)
+		if (graphicsState.cameraControl.moveBackward)
 		{
-			state.camControl.movementVec.x += kMovementPerSecond_* dt * sin(state.camControl.phi);
-			state.camControl.movementVec.z -= kMovementPerSecond_* dt * cos(state.camControl.phi);
-			//state.camControl.movementVec -= kMovementPerSecond_ * dt * Vec3f{ 0.f,0.f,1.f };
+			graphicsState.cameraControl.movementDirection.x += kMovementSpeed * deltaTime * sin(graphicsState.cameraControl.yaw);
+			graphicsState.cameraControl.movementDirection.z -= kMovementSpeed * deltaTime * cos(graphicsState.cameraControl.yaw);
 		}
-	    if (state.camControl.actionMoveLeft)
+		if (graphicsState.cameraControl.moveLeft)
 		{
-			state.camControl.movementVec.x += kMovementPerSecond_ * dt * cos(state.camControl.phi);
-			state.camControl.movementVec.z += kMovementPerSecond_ * dt * sin(state.camControl.phi);
-			//state.camControl.movementVec += kMovementPerSecond_ * dt * Vec3f{ 1.f,0.f,0.f };
+			graphicsState.cameraControl.movementDirection.x += kMovementSpeed * deltaTime * cos(graphicsState.cameraControl.yaw);
+			graphicsState.cameraControl.movementDirection.z += kMovementSpeed * deltaTime * sin(graphicsState.cameraControl.yaw);
 		}
-	    if (state.camControl.actionMoveRight)
+		if (graphicsState.cameraControl.moveRight)
 		{
-			state.camControl.movementVec.x -= kMovementPerSecond_ * dt * cos(state.camControl.phi);
-			state.camControl.movementVec.z -= kMovementPerSecond_ * dt * sin(state.camControl.phi);
-			//state.camControl.movementVec -= kMovementPerSecond_ * dt * Vec3f{ 1.f,0.f,0.f };
+			graphicsState.cameraControl.movementDirection.x -= kMovementSpeed * deltaTime * cos(graphicsState.cameraControl.yaw);
+			graphicsState.cameraControl.movementDirection.z -= kMovementSpeed * deltaTime * sin(graphicsState.cameraControl.yaw);
 		}
-	    if (state.camControl.actionMoveUp)
+		if (graphicsState.cameraControl.moveUp)
 		{
-			state.camControl.movementVec -= kMovementPerSecond_ * dt * Vec3f{ 0.f,1.f,0.f };
+			graphicsState.cameraControl.movementDirection.y -= kMovementSpeed * deltaTime;
 		}
-	    if (state.camControl.actionMoveDown)
+		if (graphicsState.cameraControl.moveDown)
 		{
-			state.camControl.movementVec += kMovementPerSecond_ * dt * Vec3f{ 0.f,1.f,0.f };
+			graphicsState.cameraControl.movementDirection.y += kMovementSpeed * deltaTime;
 		}
+		// Update camera position
+		translation = make_translation(graphicsState.cameraControl.movementDirection);
+		Mat44f cameraTranslation = rotationX * rotationY * translation;
 
-		T = make_translation(state.camControl.movementVec);
+		// Projection and view matrices
+		Mat44f projectionMatrix = make_perspective_projection(45.f, framebufferWidth / framebufferHeight, 0.1f, 100.f);
+		Mat44f projectionViewMatrix = projectionMatrix * (cameraTranslation * modelToWorld);
 
-		Mat44f world2Camera = Rx * Ry * T;
-
-		//Mat44f world2Camera = make_translation({ 0.f, 0.f, -10.f });
-
-		Mat44f projection = make_perspective_projection(
-			60 * kPi_ / 180.f,			//FOV:60 converted to radians
-			fbwidth / float(fbheight), //aspect ratio
-			0.1f,					  //near plane
-			100.f					 //far plane
-		);
-
-		Mat44f projCameraWorld = projection * (world2Camera * model2World);
-
-		//ENDOF TODO
-
-		// Draw scene
+		// Rendering code
 		OGL_CHECKPOINT_DEBUG();
-
-		//TODO: draw frame
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	
-		// Draw the map
-		mesh_renderer(vao, vertexCount,  state, textures, prog.programId(), projCameraWorld, normalMatrix);
 
-		// Draw the first launchpad
-		mesh_renderer(launch_vao_1, launchVertexCount, state, 0, prog2.programId(), projCameraWorld, normalMatrix);
+		// Use the correct shader for the launchpad
+		glUseProgram(prog2.programId());
 
-		// Draw the second launchpad
-		mesh_renderer(launch_vao_2, launchVertexCount, state, 0, prog2.programId(), projCameraWorld, normalMatrix);
+		// Bind the texture
+		glBindTexture(GL_TEXTURE_2D, textures);
+
+		// Render other models like landing pad, etc.
+		renderMesh(vao, vertexCount, graphicsState, textures, shaderProgram.programId(), projectionViewMatrix, normalMat);
+
+		// Render the launchpad
+		renderMesh(launchpadVAO1, launchpadVertexCount, graphicsState, 0, prog2.programId(), projectionViewMatrix, normalMat);
+		renderMesh(launchpadVAO2, launchpadVertexCount, graphicsState, 0, prog2.programId(), projectionViewMatrix, normalMat);
 
 		glBindVertexArray(0);
-		//glBindVertexArray(1);
-
 		glUseProgram(0);
-		//glUseProgram(1);
-
-		//ENDOF TODO
-
 		OGL_CHECKPOINT_DEBUG();
 
 		// Display results
 		glfwSwapBuffers( window );
 	}
-
-	// Cleanup.
-	//TODO: additional cleanup
-	
 	return 0;
 }
 catch( std::exception const& eErr )
@@ -432,144 +352,117 @@ namespace
 		std::fprintf( stderr, "GLFW error: %s (%d)\n", aErrDesc, aErrNum );
 	}
 
-	void glfw_callback_key_(GLFWwindow* aWindow, int aKey, int, int aAction, int)
+	void glfw_callback_key_(GLFWwindow* window, int key, int, int action, int)
 	{
-		if (GLFW_KEY_ESCAPE == aKey && GLFW_PRESS == aAction)
+		if (GLFW_KEY_ESCAPE == key && GLFW_PRESS == action)
 		{
-			glfwSetWindowShouldClose(aWindow, GLFW_TRUE);
+			glfwSetWindowShouldClose(window, GLFW_TRUE);
 			return;
 		}
 
-		if (auto* state = static_cast<State_*>(glfwGetWindowUserPointer(aWindow)))
+		if (auto* graphicsState = static_cast<GraphicsState*>(glfwGetWindowUserPointer(window)))
 		{
-			// R-key reloads shaders.
-			if (GLFW_KEY_R == aKey && GLFW_PRESS == aAction)
+			// R-key reloads shaders
+			if (GLFW_KEY_R == key && GLFW_PRESS == action)
 			{
-				if (state->prog)
+				if (graphicsState->shaderProg)
 				{
 					try
 					{
-						state->prog->reload();
+						graphicsState->shaderProg->reload();
 						std::fprintf(stderr, "Shaders reloaded and recompiled.\n");
 					}
-					catch (std::exception const& eErr)
+					catch (std::exception const& error)
 					{
 						std::fprintf(stderr, "Error when reloading shader:\n");
-						std::fprintf(stderr, "%s\n", eErr.what());
+						std::fprintf(stderr, "%s\n", error.what());
 						std::fprintf(stderr, "Keeping old shader.\n");
 					}
 				}
 			}
 
-			// TODO SHIFT INCREASES SPEED
+			// Shift key increases movement speed
+			if (GLFW_KEY_LEFT_SHIFT == key && GLFW_PRESS == action)
+				kMovementSpeed *= 2.f;
+			else if (GLFW_KEY_LEFT_SHIFT == key && GLFW_RELEASE == action)
+				kMovementSpeed /= 2.f;
 
-			if (GLFW_KEY_LEFT_SHIFT == aKey && GLFW_PRESS == aAction)
-				kMovementPerSecond_ *= 2.f;
-			else if (GLFW_KEY_LEFT_SHIFT == aKey && GLFW_RELEASE == aAction)
-				kMovementPerSecond_ /= 2.f;
-
-
-			// TODO CTRL DECREASES SPEED
-			if (GLFW_KEY_LEFT_CONTROL == aKey && GLFW_PRESS == aAction) 
-				kMovementPerSecond_ /= 2.f;
-			else if (GLFW_KEY_LEFT_CONTROL == aKey && GLFW_RELEASE == aAction)
-				kMovementPerSecond_ *= 2.f;
-
+			// Ctrl key decreases movement speed
+			if (GLFW_KEY_LEFT_CONTROL == key && GLFW_PRESS == action)
+				kMovementSpeed /= 2.f;
+			else if (GLFW_KEY_LEFT_CONTROL == key && GLFW_RELEASE == action)
+				kMovementSpeed *= 2.f;
 
 			// Space toggles camera
-			if (GLFW_KEY_SPACE == aKey && GLFW_PRESS == aAction)
+			if (GLFW_KEY_SPACE == key && GLFW_PRESS == action)
 			{
-				state->camControl.cameraActive = !state->camControl.cameraActive;
+				graphicsState->cameraControl.isCameraActive = !graphicsState->cameraControl.isCameraActive;
 
-				if (state->camControl.cameraActive)
-					glfwSetInputMode(aWindow, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+				if (graphicsState->cameraControl.isCameraActive)
+					glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
 				else
-					glfwSetInputMode(aWindow, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+					glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			}
 
-			// Camera controls if camera is active
-			if (state->camControl.cameraActive)
+			// Camera controls when active
+			if (graphicsState->cameraControl.isCameraActive)
 			{
-				if (GLFW_KEY_W == aKey)
+				if (GLFW_KEY_W == key)
 				{
-					if (GLFW_PRESS == aAction)
-						state->camControl.actionMoveForward = true;
-					else if (GLFW_RELEASE == aAction)
-						state->camControl.actionMoveForward = false;
+					graphicsState->cameraControl.moveForward = (GLFW_PRESS == action);
 				}
-				else if (GLFW_KEY_S == aKey)
+				else if (GLFW_KEY_S == key)
 				{
-					if (GLFW_PRESS == aAction)
-						state->camControl.actionMoveBackward = true;
-					else if (GLFW_RELEASE == aAction)
-						state->camControl.actionMoveBackward = false;
+					graphicsState->cameraControl.moveBackward = (GLFW_PRESS == action);
 				}
-				else if (GLFW_KEY_A == aKey)
+				else if (GLFW_KEY_A == key)
 				{
-					if (GLFW_PRESS == aAction)
-						state->camControl.actionMoveLeft = true;
-					else if (GLFW_RELEASE == aAction)
-						state->camControl.actionMoveLeft = false;
+					graphicsState->cameraControl.moveLeft = (GLFW_PRESS == action);
 				}
-				else if (GLFW_KEY_D == aKey)
+				else if (GLFW_KEY_D == key)
 				{
-					if (GLFW_PRESS == aAction)
-						state->camControl.actionMoveRight = true;
-					else if (GLFW_RELEASE == aAction)
-						state->camControl.actionMoveRight = false;
+					graphicsState->cameraControl.moveRight = (GLFW_PRESS == action);
 				}
-				else if (GLFW_KEY_Q == aKey)
+				else if (GLFW_KEY_Q == key)
 				{
-					if (GLFW_PRESS == aAction)
-						state->camControl.actionMoveDown = true;
-					else if (GLFW_RELEASE == aAction)
-						state->camControl.actionMoveDown = false;
+					graphicsState->cameraControl.moveDown = (GLFW_PRESS == action);
 				}
-				else if (GLFW_KEY_E == aKey)
+				else if (GLFW_KEY_E == key)
 				{
-					if (GLFW_PRESS == aAction)
-						state->camControl.actionMoveUp = true;
-					else if (GLFW_RELEASE == aAction)
-						state->camControl.actionMoveUp = false;
+					graphicsState->cameraControl.moveUp = (GLFW_PRESS == action);
 				}
-				else if (GLFW_KEY_RIGHT_SHIFT == aKey)
+				else if (GLFW_KEY_RIGHT_SHIFT == key)
 				{
-					if (GLFW_PRESS == aAction)
-						kMovementPerSecond_ *= 2.f;
-					else if (GLFW_RELEASE == aAction)
-						kMovementPerSecond_ /= 2.f;
+					kMovementSpeed *= (GLFW_PRESS == action) ? 2.f : 0.5f;
 				}
-				else if (GLFW_KEY_RIGHT_CONTROL == aKey)
+				else if (GLFW_KEY_RIGHT_CONTROL == key)
 				{
-					if (GLFW_PRESS == aAction)
-						kMovementPerSecond_ /= 2.f;
-					else if (GLFW_RELEASE == aAction)
-						kMovementPerSecond_ *= 2.f;
+					kMovementSpeed *= (GLFW_PRESS == action) ? 0.5f : 2.f;
 				}
 			}
 		}
 	}
 
-	void glfw_callback_motion_(GLFWwindow* aWindow, double aX, double aY)
+	void glfw_callback_motion_(GLFWwindow* window, double xpos, double ypos)
 	{
-		if (auto* state = static_cast<State_*>(glfwGetWindowUserPointer(aWindow)))
+		if (auto* graphicsState = static_cast<GraphicsState*>(glfwGetWindowUserPointer(window)))
 		{
-			if (state->camControl.cameraActive)
+			if (graphicsState->cameraControl.isCameraActive)
 			{
-				auto const dx = float(aX - state->camControl.lastX);
-				auto const dy = float(aY - state->camControl.lastY);
+				auto const deltaX = float(xpos - graphicsState->cameraControl.prevX);
+				auto const deltaY = float(ypos - graphicsState->cameraControl.prevY);
 
-				state->camControl.phi += dx * kMouseSensitivity_;
+				graphicsState->cameraControl.yaw += deltaX * kMouseSensitivity_;
+				graphicsState->cameraControl.pitch += deltaY * kMouseSensitivity_;
 
-				state->camControl.theta += dy * kMouseSensitivity_;
-				if (state->camControl.theta > kPi_ / 2.f)
-					state->camControl.theta = kPi_ / 2.f;
-				else if (state->camControl.theta < -kPi_ / 2.f)
-					state->camControl.theta = -kPi_ / 2.f;
+				if (graphicsState->cameraControl.pitch > kPi_ / 2.f)
+					graphicsState->cameraControl.pitch = kPi_ / 2.f;
+				else if (graphicsState->cameraControl.pitch < -kPi_ / 2.f)
+					graphicsState->cameraControl.pitch = -kPi_ / 2.f;
 			}
 
-			state->camControl.lastX = float(aX);
-			state->camControl.lastY = float(aY);
+			graphicsState->cameraControl.prevX = float(xpos);
+			graphicsState->cameraControl.prevY = float(ypos);
 		}
 	}
 
@@ -584,10 +477,8 @@ namespace
 
 	GLFWWindowDeleter::~GLFWWindowDeleter()
 	{
-		if( window )
-			glfwDestroyWindow( window );
+		if (window)
+			glfwDestroyWindow(window);
 	}
 }
-
-//different use program 
 

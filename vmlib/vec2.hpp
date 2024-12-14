@@ -28,18 +28,18 @@ struct Vec2f
 // functions have some additional limitations compared to normal functions.
 
 constexpr
-Vec2f operator+( Vec2f aVec ) noexcept
+Vec2f operator+(Vec2f aVec) noexcept
 {
 	return aVec;
 }
 constexpr
-Vec2f operator-( Vec2f aVec ) noexcept
+Vec2f operator-(Vec2f aVec) noexcept
 {
 	return { -aVec.x, -aVec.y };
 }
 
 constexpr
-Vec2f operator+( Vec2f aLeft, Vec2f aRight ) noexcept
+Vec2f operator+(Vec2f aLeft, Vec2f aRight) noexcept
 {
 	return Vec2f{
 		aLeft.x + aRight.x,
@@ -47,7 +47,7 @@ Vec2f operator+( Vec2f aLeft, Vec2f aRight ) noexcept
 	};
 }
 constexpr
-Vec2f operator-( Vec2f aLeft, Vec2f aRight ) noexcept
+Vec2f operator-(Vec2f aLeft, Vec2f aRight) noexcept
 {
 	return Vec2f{
 		aLeft.x - aRight.x,
@@ -57,32 +57,32 @@ Vec2f operator-( Vec2f aLeft, Vec2f aRight ) noexcept
 
 
 constexpr
-Vec2f operator*( float aScalar, Vec2f aVec ) noexcept
+Vec2f operator*(float aScalar, Vec2f aVec) noexcept
 {
 	return Vec2f{ aScalar * aVec.x, aScalar * aVec.y };
 }
 constexpr
-Vec2f operator*( Vec2f aVec, float aScalar ) noexcept
+Vec2f operator*(Vec2f aVec, float aScalar) noexcept
 {
 	return Vec2f{ aVec.x * aScalar, aVec.y * aScalar };
 }
 
 constexpr
-Vec2f operator/( Vec2f aVec, float aScalar ) noexcept
+Vec2f operator/(Vec2f aVec, float aScalar) noexcept
 {
 	return Vec2f{ aVec.x / aScalar, aVec.y / aScalar };
 }
 
 
 constexpr
-Vec2f& operator+=( Vec2f& aLeft, Vec2f aRight ) noexcept
+Vec2f& operator+=(Vec2f& aLeft, Vec2f aRight) noexcept
 {
 	aLeft.x += aRight.x;
 	aLeft.y += aRight.y;
 	return aLeft;
 }
 constexpr
-Vec2f& operator-=( Vec2f& aLeft, Vec2f aRight ) noexcept
+Vec2f& operator-=(Vec2f& aLeft, Vec2f aRight) noexcept
 {
 	aLeft.x -= aRight.x;
 	aLeft.y -= aRight.y;
@@ -90,14 +90,14 @@ Vec2f& operator-=( Vec2f& aLeft, Vec2f aRight ) noexcept
 }
 
 constexpr
-Vec2f& operator*=( Vec2f& aLeft, float aRight ) noexcept
+Vec2f& operator*=(Vec2f& aLeft, float aRight) noexcept
 {
 	aLeft.x *= aRight;
 	aLeft.y *= aRight;
 	return aLeft;
 }
 constexpr
-Vec2f& operator/=( Vec2f& aLeft, float aRight ) noexcept
+Vec2f& operator/=(Vec2f& aLeft, float aRight) noexcept
 {
 	aLeft.x /= aRight;
 	aLeft.y /= aRight;
@@ -108,18 +108,18 @@ Vec2f& operator/=( Vec2f& aLeft, float aRight ) noexcept
 // A few common functions:
 
 constexpr
-float dot( Vec2f aLeft, Vec2f aRight ) noexcept
+float dot(Vec2f aLeft, Vec2f aRight) noexcept
 {
 	return aLeft.x * aRight.x + aLeft.y * aRight.y;
 }
 
 inline
-float length( Vec2f aVec ) noexcept
+float length(Vec2f aVec) noexcept
 {
 	// The standard function std::sqrt() is not marked as constexpr. length()
 	// calls std::sqrt() unconditionally, so length() cannot be marked
 	// constexpr itself.
-	return std::sqrt( dot( aVec, aVec ) );
+	return std::sqrt(dot(aVec, aVec));
 }
 
 
